@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791788857355,
+  "lastUpdate": 1791788861278,
   "repoUrl": "https://github.com/timescale/pg_textsearch",
   "entries": {
     "cranfield Benchmarks": [
@@ -277640,6 +277640,48 @@ window.BENCHMARK_DATA = {
           {
             "name": "paradedb_cranfield_insert - Throughput (avg ms/query)",
             "value": 231.17,
+            "unit": "ms"
+          },
+          {
+            "name": "paradedb_cranfield_insert - Index Size",
+            "value": 3.05,
+            "unit": "MB"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Todd J. Green",
+            "username": "tjgreen42",
+            "email": "tjgreen@gmail.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "a5fdfeb1b747475ab2fe8b24abc7602dcb95a5a1",
+          "message": "Fix maintenance when pg_textsearch is preloaded but not installed (#543)\n\nPreloaded utility hooks tried to look up the BM25 access method even in\ndatabases without pg_textsearch, breaking database/schema REINDEX,\nuntargeted VACUUM FULL and CLUSTER, and REASSIGN OWNED.\n\nReturn an empty index list when the access method is absent. Add\nregression coverage before extension installation, with a BM25 index,\nand after dropping the extension in the same session.",
+          "timestamp": "2026-10-02T02:27:17Z",
+          "url": "https://github.com/timescale/pg_textsearch/commit/a5fdfeb1b747475ab2fe8b24abc7602dcb95a5a1"
+        },
+        "date": 1791788860760,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "paradedb_cranfield_insert - Index Build Time",
+            "value": 5.439,
+            "unit": "ms"
+          },
+          {
+            "name": "paradedb_cranfield_insert - Insert Time",
+            "value": 63.971,
+            "unit": "ms"
+          },
+          {
+            "name": "paradedb_cranfield_insert - Throughput (avg ms/query)",
+            "value": 232.48,
             "unit": "ms"
           },
           {
