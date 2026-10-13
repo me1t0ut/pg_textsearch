@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791872808345,
+  "lastUpdate": 1791872813876,
   "repoUrl": "https://github.com/timescale/pg_textsearch",
   "entries": {
     "cranfield Benchmarks": [
@@ -347986,6 +347986,78 @@ window.BENCHMARK_DATA = {
           {
             "name": "msmarco_vacuum - Query Latency After Update VACUUM",
             "value": 7.83,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Todd J. Green",
+            "username": "tjgreen42",
+            "email": "tjgreen@gmail.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "a5fdfeb1b747475ab2fe8b24abc7602dcb95a5a1",
+          "message": "Fix maintenance when pg_textsearch is preloaded but not installed (#543)\n\nPreloaded utility hooks tried to look up the BM25 access method even in\ndatabases without pg_textsearch, breaking database/schema REINDEX,\nuntargeted VACUUM FULL and CLUSTER, and REASSIGN OWNED.\n\nReturn an empty index list when the access method is absent. Add\nregression coverage before extension installation, with a BM25 index,\nand after dropping the extension in the same session.",
+          "timestamp": "2026-10-02T02:27:17Z",
+          "url": "https://github.com/timescale/pg_textsearch/commit/a5fdfeb1b747475ab2fe8b24abc7602dcb95a5a1"
+        },
+        "date": 1791872813037,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "msmarco_vacuum - Index Size",
+            "value": 2435,
+            "unit": "MB"
+          },
+          {
+            "name": "msmarco_vacuum - Partial VACUUM (concentrated delete)",
+            "value": 1899.543,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco_vacuum - Full VACUUM (uniform delete)",
+            "value": 12411.155,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco_vacuum - Full VACUUM (uniform update)",
+            "value": 13913.172,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco_vacuum - Index Size After Partial VACUUM",
+            "value": 2435,
+            "unit": "MB"
+          },
+          {
+            "name": "msmarco_vacuum - Index Size After Full VACUUM",
+            "value": 2435,
+            "unit": "MB"
+          },
+          {
+            "name": "msmarco_vacuum - Query Latency After Partial VACUUM",
+            "value": 6.73,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco_vacuum - Query Latency After Full VACUUM",
+            "value": 6.74,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco_vacuum - Index Size After Update VACUUM",
+            "value": 2435,
+            "unit": "MB"
+          },
+          {
+            "name": "msmarco_vacuum - Query Latency After Update VACUUM",
+            "value": 6.82,
             "unit": "ms"
           }
         ]
