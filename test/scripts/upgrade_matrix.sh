@@ -194,13 +194,24 @@ SELECT count(*) FROM (
 # ------------------------------------------------------------------ #
 is_legacy() { [[ "$1" =~ ^0\.[0-4]\. ]] || [[ "$1" == 0.5.0 ]]; }
 
+# Header facts of index i as version|capabilities.  bm25_index_info()
+# exists only in the current SQL, so the extension is updated inside a
+# transaction that is rolled back: every other step keeps running
+# against the OLD SQL catalog, which is the window users hit between
+# swapping the binary and running ALTER EXTENSION UPDATE.
+header_facts() {
+  scalar "BEGIN;
+    ALTER EXTENSION pg_textsearch UPDATE TO '$CURRENT_VERSION';
+    SELECT metapage_version::text || '|' ||
+      coalesce(capabilities::text, 'NULL') FROM bm25_index_info('i');
+    ROLLBACK;"
+}
+
 # Inspection must report actual old headers without upgrading them.
 check_header_info() { # $1=label $2=expected version $3=expected bits
   local label="$1" expected="$2|$3" actual repeated
-  actual="$(scalar "SELECT metapage_version::text || '|' ||
-    coalesce(capabilities::text, 'NULL') FROM bm25_index_info('i');")"
-  repeated="$(scalar "SELECT metapage_version::text || '|' ||
-    coalesce(capabilities::text, 'NULL') FROM bm25_index_info('i');")"
+  actual="$(header_facts)"
+  repeated="$(header_facts)"
   [ "$actual" = "$expected" ] && [ "$repeated" = "$expected" ] ||
     fail "$label: header facts $actual/$repeated != $expected"
 }
@@ -218,9 +229,6 @@ run_compat_shape() { # $1=version $2=shape
   stop_pg
   build_install_current || { fail "current build/install failed"; return; }
   start_pg || { fail "$v/$st: NEW server failed to start (corruption?)"; return; }
-  runsql "ALTER EXTENSION pg_textsearch UPDATE TO '$CURRENT_VERSION';" || {
-    fail "$v/$st: SQL upgrade failed"; return;
-  }
   case "$v" in
     1.5.*) check_header_info "$v/$st" 9 1 ;;
     1.3.1|1.4.*) check_header_info "$v/$st" 8 NULL ;;
@@ -271,9 +279,6 @@ run_legacy() { # $1=version
   stop_pg
   build_install_current || { fail "current build/install failed"; return; }
   start_pg || { fail "$v(legacy): NEW server failed to start"; return; }
-  runsql "ALTER EXTENSION pg_textsearch UPDATE TO '$CURRENT_VERSION';" || {
-    fail "$v(legacy): SQL upgrade failed"; return;
-  }
   check_header_info "$v/legacy" 5 NULL
 
   # Query WITHOUT reindex must ERROR cleanly and NOT crash the server.
