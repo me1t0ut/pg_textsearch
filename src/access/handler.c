@@ -227,28 +227,6 @@ tp_report_missing_relation(Oid relid)
 }
 
 /*
- * Report insufficient privilege for tp_open_bm25_index().  Matches the
- * message aclcheck_error() would produce, with a detail naming the
- * privilege that would suffice.
- */
-static void
-tp_report_index_access_denied(const char *relname, TpIndexAccess access)
-{
-	if (access == TP_INDEX_ACCESS_OWNER)
-	{
-		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_INDEX, relname);
-		return; /* not reached */
-	}
-
-	ereport(ERROR,
-			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			 errmsg("permission denied for index %s", relname),
-			 errdetail(
-					 "Only the owner of the index, or a role with the "
-					 "MAINTAIN privilege on its table, may do this.")));
-}
-
-/*
  * Whether the caller has the requested access.  For MAINTAIN, check the
  * index's table, as REINDEX does; heap_oid may be InvalidOid when the OID
  * does not name an index, in which case the relation itself is checked so
@@ -268,6 +246,28 @@ tp_has_index_access(Oid indexoid, Oid heap_oid, TpIndexAccess access)
 
 	target = OidIsValid(heap_oid) ? heap_oid : indexoid;
 	return pg_class_aclcheck(target, GetUserId(), ACL_MAINTAIN) == ACLCHECK_OK;
+}
+
+/*
+ * Raise an error unless the caller has the requested access.  The OWNER
+ * error matches aclcheck_error(); the MAINTAIN error has the same form,
+ * with a detail naming the privilege that would suffice.
+ */
+static void
+tp_check_index_access(
+		Oid indexoid, Oid heap_oid, TpIndexAccess access, const char *relname)
+{
+	if (tp_has_index_access(indexoid, heap_oid, access))
+		return;
+
+	if (access == TP_INDEX_ACCESS_OWNER)
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_INDEX, relname);
+	ereport(ERROR,
+			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+			 errmsg("permission denied for index %s", relname),
+			 errdetail(
+					 "Only the owner of the index, or a role with the "
+					 "MAINTAIN privilege on its table, may do this.")));
 }
 
 /*
@@ -291,9 +291,8 @@ tp_open_bm25_index(Oid indexoid, LOCKMODE lockmode, TpIndexAccess access)
 
 		if (relname == NULL)
 			tp_report_missing_relation(indexoid);
-		if (!tp_has_index_access(
-					indexoid, IndexGetRelation(indexoid, true), access))
-			tp_report_index_access_denied(relname, access);
+		tp_check_index_access(
+				indexoid, IndexGetRelation(indexoid, true), access, relname);
 	}
 
 	/* The relation may also be dropped while this caller waits. */
@@ -325,15 +324,13 @@ tp_open_bm25_index(Oid indexoid, LOCKMODE lockmode, TpIndexAccess access)
 
 	/*
 	 * The index is locked, so it and its table exist and these lookups
-	 * cannot fail.
+	 * cannot fail.  On error, transaction abort releases the relation.
 	 */
-	if (!tp_has_index_access(indexoid, index_rel->rd_index->indrelid, access))
-	{
-		char *relname = pstrdup(RelationGetRelationName(index_rel));
-
-		relation_close(index_rel, lockmode);
-		tp_report_index_access_denied(relname, access);
-	}
+	tp_check_index_access(
+			indexoid,
+			index_rel->rd_index->indrelid,
+			access,
+			RelationGetRelationName(index_rel));
 
 	return index_rel;
 }
