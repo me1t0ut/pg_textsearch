@@ -2,8 +2,8 @@
  * Copyright (c) 2025-2026 Tiger Data, Inc.
  * Licensed under the PostgreSQL License. See LICENSE for details.
  *
- * index_info.c - Inspection of BM25 index header facts, for roles that may
- *                REINDEX the index
+ * index_info.c - Inspection of BM25 index header facts, for the index owner
+ *                and roles with MAINTAIN on its table
  */
 #include <postgres.h>
 

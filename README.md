@@ -477,10 +477,12 @@ SELECT bm25_spill_index('docs_idx');
 
 ### Index header
 
-Anyone allowed to `REINDEX` an index can inspect its current header, without
-superuser privileges: the index owner, a role with `MAINTAIN` on the table, or
-a member of `pg_maintain`. Note that `MAINTAIN` and `pg_maintain` also allow
-`VACUUM`, `ANALYZE`, `REINDEX`, and similar maintenance commands.
+The index owner, a role with `MAINTAIN` on the table (the privilege
+`REINDEX` requires), or a member of `pg_maintain` can inspect an index's
+current header, without superuser privileges. Unlike `REINDEX`, the owner can
+inspect even after revoking its own `MAINTAIN`. Note that `MAINTAIN` and
+`pg_maintain` also allow `VACUUM`, `ANALYZE`, `REINDEX`, and similar
+maintenance commands.
 
 ```sql
 SELECT * FROM bm25_index_info('public.docs_idx'::regclass);

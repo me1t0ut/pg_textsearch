@@ -100,7 +100,7 @@ typedef enum TpIndexAccess
 {
 	TP_INDEX_ACCESS_ANY,	 /* no privilege check */
 	TP_INDEX_ACCESS_OWNER,	 /* caller must own the index */
-	TP_INDEX_ACCESS_MAINTAIN /* owner, or MAINTAIN on the table (as REINDEX) */
+	TP_INDEX_ACCESS_MAINTAIN /* owner, or MAINTAIN on the table */
 } TpIndexAccess;
 
 /*

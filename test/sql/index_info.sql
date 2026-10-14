@@ -1,5 +1,5 @@
--- Header inspection requires what REINDEX requires: ownership of the index
--- or MAINTAIN on its table.  No superuser is involved.
+-- Header inspection requires ownership of the index or MAINTAIN on its
+-- table (the privilege REINDEX requires).  No superuser is involved.
 CREATE EXTENSION pg_textsearch;
 CREATE ROLE index_info_owner;
 CREATE ROLE index_info_reader;
@@ -67,7 +67,8 @@ SET ROLE index_info_pg_maintain;
 SELECT * FROM bm25_index_info('index_info_bm25'::regclass);
 RESET ROLE;
 
--- The owner may inspect even after revoking its own MAINTAIN.
+-- The owner may inspect even after revoking its own MAINTAIN, unlike
+-- REINDEX, which then requires granting MAINTAIN back.
 SET ROLE index_info_owner;
 REVOKE MAINTAIN ON index_info_docs FROM index_info_owner;
 SELECT * FROM bm25_index_info('index_info_bm25'::regclass);

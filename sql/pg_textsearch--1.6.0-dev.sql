@@ -325,7 +325,7 @@ AS 'MODULE_PATHNAME', 'tp_index_info'
 LANGUAGE C VOLATILE STRICT PARALLEL RESTRICTED;
 
 COMMENT ON FUNCTION @extschema@.bm25_index_info(regclass) IS
-    'Report current BM25 header facts. Requires ownership of the index or MAINTAIN on its table, as for REINDEX. NULL means a field is absent or its layout is unknown; capability bits and legacy pointers do not attest to index completeness.';
+    'Report current BM25 header facts. Requires ownership of the index or MAINTAIN on its table (the privilege REINDEX requires). NULL means a field is absent or its layout is unknown; capability bits and legacy pointers do not attest to index completeness.';
 
 -- Fast summary function showing only statistics (no content dump)
 CREATE FUNCTION @extschema@.bm25_summarize_index(text) RETURNS text
