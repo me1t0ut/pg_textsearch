@@ -119,7 +119,8 @@ tp_level_counts(PG_FUNCTION_ARGS)
 	ArrayType			*result;
 	int					 i;
 
-	index_rel = tp_open_bm25_index(indexoid, AccessShareLock, false);
+	index_rel =
+			tp_open_bm25_index(indexoid, AccessShareLock, TP_INDEX_ACCESS_ANY);
 
 	metap = tp_get_metapage(index_rel);
 	for (i = 0; i < TP_MAX_LEVELS; i++)
@@ -143,7 +144,8 @@ tp_needs_compaction(PG_FUNCTION_ARGS)
 	TpLocalIndexState *index_state;
 	bool			   available;
 
-	index_rel	= tp_open_bm25_index(indexoid, AccessShareLock, false);
+	index_rel =
+			tp_open_bm25_index(indexoid, AccessShareLock, TP_INDEX_ACCESS_ANY);
 	index_state = tp_get_local_index_state(indexoid);
 	if (index_state == NULL)
 	{
@@ -185,7 +187,8 @@ tp_compact_index(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
 				 errmsg("cannot compact a bm25 index during recovery")));
 
-	index_rel = tp_open_bm25_index(indexoid, RowExclusiveLock, true);
+	index_rel = tp_open_bm25_index(
+			indexoid, RowExclusiveLock, TP_INDEX_ACCESS_OWNER);
 
 	if (!RelationUsesLocalBuffers(index_rel))
 		PreventCommandIfReadOnly("bm25 index compaction");
@@ -245,7 +248,8 @@ tp_compact_index_step(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
 				 errmsg("cannot compact a bm25 index during recovery")));
 
-	index_rel = tp_open_bm25_index(indexoid, RowExclusiveLock, true);
+	index_rel = tp_open_bm25_index(
+			indexoid, RowExclusiveLock, TP_INDEX_ACCESS_OWNER);
 
 	if (!RelationUsesLocalBuffers(index_rel))
 		PreventCommandIfReadOnly("bm25 index compaction");

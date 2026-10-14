@@ -2,7 +2,8 @@
  * Copyright (c) 2025-2026 Tiger Data, Inc.
  * Licensed under the PostgreSQL License. See LICENSE for details.
  *
- * index_info.c - Owner-only inspection of BM25 index header facts
+ * index_info.c - Inspection of BM25 index header facts, for roles that may
+ *                REINDEX the index
  */
 #include <postgres.h>
 
@@ -59,8 +60,9 @@ tp_index_info(PG_FUNCTION_ARGS)
 	Relation		  index_rel;
 	TpIndexHeaderInfo info;
 
-	index_rel = tp_open_bm25_index(index_oid, AccessShareLock, true);
-	info	  = tp_inspect_metapage(index_rel);
+	index_rel = tp_open_bm25_index(
+			index_oid, AccessShareLock, TP_INDEX_ACCESS_MAINTAIN);
+	info = tp_inspect_metapage(index_rel);
 	relation_close(index_rel, AccessShareLock);
 
 	PG_RETURN_DATUM(tp_index_header_info_datum(fcinfo, &info));

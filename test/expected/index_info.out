@@ -1,8 +1,11 @@
--- Header inspection is owner-only, including for non-superusers.
+-- Header inspection requires what REINDEX requires: ownership of the index
+-- or MAINTAIN on its table.  No superuser is involved.
 CREATE EXTENSION pg_textsearch;
 CREATE ROLE index_info_owner;
 CREATE ROLE index_info_reader;
 CREATE ROLE index_info_member INHERIT;
+CREATE ROLE index_info_maintainer;
+CREATE ROLE index_info_pg_maintain;
 GRANT index_info_owner TO index_info_member;
 CREATE TABLE index_info_docs (id integer PRIMARY KEY, body text);
 INSERT INTO index_info_docs VALUES (1, 'alpha'), (2, ''), (3, 'the');
@@ -70,10 +73,52 @@ SELECT * FROM bm25_index_info('index_info_bm25'::regclass);
 (1 row)
 
 RESET ROLE;
--- SELECT privilege alone is not ownership.
+-- SELECT privilege alone does not suffice.
 SET ROLE index_info_reader;
 SELECT * FROM bm25_index_info('index_info_bm25'::regclass);
+ERROR:  permission denied for index index_info_bm25
+DETAIL:  Only the owner of the index, or a role with the MAINTAIN privilege on its table, may do this.
+RESET ROLE;
+-- MAINTAIN on the table suffices, as for REINDEX.  It does not extend to
+-- compaction, which remains owner-only.
+GRANT MAINTAIN ON index_info_docs TO index_info_maintainer;
+SET ROLE index_info_maintainer;
+SELECT * FROM bm25_index_info('index_info_bm25'::regclass);
+ metapage_version | capabilities | all_documents_indexed | legacy_docid_pointer_present 
+------------------+--------------+-----------------------+------------------------------
+                9 |            1 | t                     | f
+(1 row)
+
+SELECT bm25_compact('index_info_bm25'::regclass);
 ERROR:  must be owner of index index_info_bm25
+RESET ROLE;
+-- Revoking MAINTAIN takes effect.
+REVOKE MAINTAIN ON index_info_docs FROM index_info_maintainer;
+SET ROLE index_info_maintainer;
+SELECT * FROM bm25_index_info('index_info_bm25'::regclass);
+ERROR:  permission denied for index index_info_bm25
+DETAIL:  Only the owner of the index, or a role with the MAINTAIN privilege on its table, may do this.
+RESET ROLE;
+-- Members of pg_maintain have MAINTAIN on every table.
+GRANT pg_maintain TO index_info_pg_maintain;
+SET ROLE index_info_pg_maintain;
+SELECT * FROM bm25_index_info('index_info_bm25'::regclass);
+ metapage_version | capabilities | all_documents_indexed | legacy_docid_pointer_present 
+------------------+--------------+-----------------------+------------------------------
+                9 |            1 | t                     | f
+(1 row)
+
+RESET ROLE;
+-- The owner may inspect even after revoking its own MAINTAIN.
+SET ROLE index_info_owner;
+REVOKE MAINTAIN ON index_info_docs FROM index_info_owner;
+SELECT * FROM bm25_index_info('index_info_bm25'::regclass);
+ metapage_version | capabilities | all_documents_indexed | legacy_docid_pointer_present 
+------------------+--------------+-----------------------+------------------------------
+                9 |            1 | t                     | f
+(1 row)
+
+GRANT MAINTAIN ON index_info_docs TO index_info_owner;
 RESET ROLE;
 -- Names resolved through regclass support schemas and quoted identifiers.
 CREATE SCHEMA index_info_schema AUTHORIZATION index_info_owner;
@@ -136,6 +181,8 @@ DROP TABLE index_info_docs, index_info_parts;
 DROP SCHEMA index_info_schema CASCADE;
 NOTICE:  drop cascades to table index_info_schema.docs
 DROP ROLE index_info_member;
+DROP ROLE index_info_maintainer;
+DROP ROLE index_info_pg_maintain;
 DROP ROLE index_info_reader;
 DROP ROLE index_info_owner;
 DROP EXTENSION pg_textsearch;

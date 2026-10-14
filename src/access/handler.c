@@ -10,6 +10,7 @@
 #include <access/htup_details.h>
 #include <access/relation.h>
 #include <access/reloptions.h>
+#include <catalog/index.h>
 #include <catalog/pg_class.h>
 #include <catalog/pg_opclass.h>
 #include <catalog/pg_type.h>
@@ -226,28 +227,73 @@ tp_report_missing_relation(Oid relid)
 }
 
 /*
+ * Report insufficient privilege for tp_open_bm25_index().  Matches the
+ * message aclcheck_error() would produce, with a detail naming the
+ * privilege that would suffice.
+ */
+static void
+tp_report_index_access_denied(const char *relname, TpIndexAccess access)
+{
+	if (access == TP_INDEX_ACCESS_OWNER)
+	{
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_INDEX, relname);
+		return; /* not reached */
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+			 errmsg("permission denied for index %s", relname),
+			 errdetail(
+					 "Only the owner of the index, or a role with the "
+					 "MAINTAIN privilege on its table, may do this.")));
+}
+
+/*
+ * Whether the caller has the requested access.  For MAINTAIN, check the
+ * index's table, as REINDEX does; heap_oid may be InvalidOid when the OID
+ * does not name an index, in which case the relation itself is checked so
+ * that the caller can learn it is not a bm25 index only if privileged.
+ */
+static bool
+tp_has_index_access(Oid indexoid, Oid heap_oid, TpIndexAccess access)
+{
+	Oid target;
+
+	if (access == TP_INDEX_ACCESS_ANY)
+		return true;
+	if (object_ownercheck(RelationRelationId, indexoid, GetUserId()))
+		return true;
+	if (access == TP_INDEX_ACCESS_OWNER)
+		return false;
+
+	target = OidIsValid(heap_oid) ? heap_oid : indexoid;
+	return pg_class_aclcheck(target, GetUserId(), ACL_MAINTAIN) == ACLCHECK_OK;
+}
+
+/*
  * Open a physical bm25 index by OID, validating that it is in fact a bm25
- * index with storage and (optionally) that the caller owns it.
+ * index with storage and that the caller has the requested access.
  */
 Relation
-tp_open_bm25_index(Oid indexoid, LOCKMODE lockmode, bool need_owner)
+tp_open_bm25_index(Oid indexoid, LOCKMODE lockmode, TpIndexAccess access)
 {
 	Relation index_rel;
 
 	/*
-	 * Reject nonowners before queuing for a heavyweight lock. Recheck after
-	 * opening because ALTER OWNER can complete while this caller waits.
-	 * Check existence first: object_ownercheck() treats a missing OID as an
-	 * internal error.
+	 * Reject unprivileged callers before queuing for a heavyweight lock.
+	 * Recheck after opening because ALTER OWNER or GRANT/REVOKE can complete
+	 * while this caller waits.  Check existence first: object_ownercheck()
+	 * treats a missing OID as an internal error.
 	 */
-	if (need_owner)
+	if (access != TP_INDEX_ACCESS_ANY)
 	{
 		char *relname = get_rel_name(indexoid);
 
 		if (relname == NULL)
 			tp_report_missing_relation(indexoid);
-		if (!object_ownercheck(RelationRelationId, indexoid, GetUserId()))
-			aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_INDEX, relname);
+		if (!tp_has_index_access(
+					indexoid, IndexGetRelation(indexoid, true), access))
+			tp_report_index_access_denied(relname, access);
 	}
 
 	/* The relation may also be dropped while this caller waits. */
@@ -277,14 +323,16 @@ tp_open_bm25_index(Oid indexoid, LOCKMODE lockmode, bool need_owner)
 				 errhint("Use a physical partition index instead.")));
 	}
 
-	/* The relation exists and is locked, so this lookup cannot fail. */
-	if (need_owner &&
-		!object_ownercheck(RelationRelationId, indexoid, GetUserId()))
+	/*
+	 * The index is locked, so it and its table exist and these lookups
+	 * cannot fail.
+	 */
+	if (!tp_has_index_access(indexoid, index_rel->rd_index->indrelid, access))
 	{
 		char *relname = pstrdup(RelationGetRelationName(index_rel));
 
 		relation_close(index_rel, lockmode);
-		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_INDEX, relname);
+		tp_report_index_access_denied(relname, access);
 	}
 
 	return index_rel;
