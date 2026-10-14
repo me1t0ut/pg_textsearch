@@ -28,6 +28,8 @@ SELECT * FROM index_info_test_header(9, 1, false, 120, true);
 -- struct size (128).
 SELECT * FROM index_info_test_header(9, 1, false, 124, true);
 SELECT * FROM index_info_test_header(9, 1, false, 123, true);
+-- The row builder requires a composite result type.
+SELECT index_info_test_header_scalar(9, 1, false, 128, true);
 -- A subsequent successful call verifies error cleanup.
 SELECT * FROM index_info_test_header(9, 1, false, 128, true);
 

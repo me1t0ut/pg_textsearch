@@ -94,6 +94,9 @@ SELECT * FROM index_info_test_header(9, 1, false, 124, true);
 
 SELECT * FROM index_info_test_header(9, 1, false, 123, true);
 ERROR:  truncated bm25 metapage for version 9
+-- The row builder requires a composite result type.
+SELECT index_info_test_header_scalar(9, 1, false, 128, true);
+ERROR:  bm25_index_info requires a composite result type
 -- A subsequent successful call verifies error cleanup.
 SELECT * FROM index_info_test_header(9, 1, false, 128, true);
  metapage_version | capabilities | all_documents_indexed | legacy_docid_pointer_present 
