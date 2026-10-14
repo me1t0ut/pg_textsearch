@@ -258,11 +258,15 @@ tp_inspect_metapage_page(Page page, TpIndexHeaderInfo *info)
 	/*
 	 * The buffer manager's PageIsVerified() already rejects inconsistent
 	 * lower/upper/special bounds, and reads below only touch fixed offsets
-	 * within the page. What it does not check is whether the used area
-	 * covers our fields; an all-zero page (accepted by PageIsVerified) has
-	 * pd_lower == 0 and fails here too.
+	 * within the page.  It does not check the page size and layout version,
+	 * which with data checksums off can be corrupted while the rest of the
+	 * page looks intact, nor whether the used area covers the magic and
+	 * version fields.  An all-zero page, which PageIsVerified() accepts,
+	 * fails these checks too.
 	 */
-	if (phdr->pd_lower < content_offset + sizeof(uint32) * 2)
+	if (PageGetPageSize(page) != BLCKSZ ||
+		PageGetPageLayoutVersion(page) != PG_PAGE_LAYOUT_VERSION ||
+		phdr->pd_lower < content_offset + sizeof(uint32) * 2)
 		ereport(ERROR,
 				(errcode(ERRCODE_INDEX_CORRUPTED),
 				 errmsg("invalid bm25 metapage header")));

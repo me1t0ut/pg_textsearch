@@ -74,6 +74,18 @@ SELECT * FROM index_info_test_header(10, 1, true, 8, true);
 -- Reject malformed pages before reading missing fields.
 SELECT * FROM index_info_test_header(9, 1, false, 0, true);
 ERROR:  invalid bm25 metapage header
+-- PageIsVerified() does not check the page size and layout version, so the
+-- parser does: a valid header on a page claiming 4 kB or layout version 3.
+SELECT * FROM index_info_test_header_layout(8192, 4);
+ metapage_version | capabilities | all_documents_indexed | legacy_docid_pointer_present 
+------------------+--------------+-----------------------+------------------------------
+                9 |            1 | t                     | f
+(1 row)
+
+SELECT * FROM index_info_test_header_layout(4096, 4);
+ERROR:  invalid bm25 metapage header
+SELECT * FROM index_info_test_header_layout(8192, 3);
+ERROR:  invalid bm25 metapage header
 SELECT * FROM index_info_test_header(9, 1, false, 128, false);
 ERROR:  invalid bm25 metapage magic number
 SELECT * FROM index_info_test_header(6, 1, false, 107, true);

@@ -19,6 +19,11 @@ SELECT * FROM index_info_test_header(4294967295, 1, true, 8, true);
 SELECT * FROM index_info_test_header(10, 1, true, 8, true);
 -- Reject malformed pages before reading missing fields.
 SELECT * FROM index_info_test_header(9, 1, false, 0, true);
+-- PageIsVerified() does not check the page size and layout version, so the
+-- parser does: a valid header on a page claiming 4 kB or layout version 3.
+SELECT * FROM index_info_test_header_layout(8192, 4);
+SELECT * FROM index_info_test_header_layout(4096, 4);
+SELECT * FROM index_info_test_header_layout(8192, 3);
 SELECT * FROM index_info_test_header(9, 1, false, 128, false);
 SELECT * FROM index_info_test_header(6, 1, false, 107, true);
 SELECT * FROM index_info_test_header(7, 1, false, 115, true);
