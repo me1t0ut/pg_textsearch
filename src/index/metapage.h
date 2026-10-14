@@ -165,6 +165,20 @@ StaticAssertDecl(
 		"backward-compat is broken");
 
 /*
+ * v9 data size: everything through capabilities.  Excludes the
+ * struct's trailing alignment padding (sizeof is 128), so header
+ * inspection requires only bytes that carry v9 fields.
+ */
+#define TP_INDEX_METAPAGE_DATA_SIZE_V9             \
+	(offsetof(TpIndexMetaPageData, capabilities) + \
+	 sizeof(((TpIndexMetaPageData *)0)->capabilities))
+
+StaticAssertDecl(
+		TP_INDEX_METAPAGE_DATA_SIZE_V9 == 124,
+		"v9 metapage prefix layout changed - "
+		"backward-compat is broken");
+
+/*
  * Header facts only. Presence flags distinguish absent/unknown fields from
  * stored zero values. This is not an on-disk structure.
  */

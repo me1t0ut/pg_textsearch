@@ -236,7 +236,15 @@ tp_get_metapage(Relation index)
  * Inspect a header without opening index state or invoking the normal
  * reader's compatibility guard. Incompatible/unknown versions still have
  * an inspectable magic/version prefix; never decode their other fields.
+ *
+ * Each known layout is named explicitly so that a version bump cannot
+ * silently decode new headers with an old layout.
  */
+StaticAssertDecl(
+		TP_METAPAGE_VERSION == TP_METAPAGE_VERSION_V9,
+		"new metapage version: teach tp_inspect_metapage_page "
+		"its layout, then update this assertion");
+
 void
 tp_inspect_metapage_page(Page page, TpIndexHeaderInfo *info)
 {
@@ -274,9 +282,8 @@ tp_inspect_metapage_page(Page page, TpIndexHeaderInfo *info)
 	case TP_METAPAGE_VERSION_V8:
 		required_size = TP_INDEX_METAPAGE_DATA_SIZE_V8;
 		break;
-	case 9:
-		required_size = offsetof(TpIndexMetaPageData, capabilities) +
-						sizeof(metap->capabilities);
+	case TP_METAPAGE_VERSION_V9:
+		required_size = TP_INDEX_METAPAGE_DATA_SIZE_V9;
 		break;
 	default:
 		return;
@@ -291,7 +298,7 @@ tp_inspect_metapage_page(Page page, TpIndexHeaderInfo *info)
 	info->legacy_docid_pointer_known   = true;
 	info->legacy_docid_pointer_present = BlockNumberIsValid(
 			metap->_unused_docid_page);
-	if (metap->version == 9)
+	if (metap->version == TP_METAPAGE_VERSION_V9)
 	{
 		info->capabilities_present = true;
 		info->capabilities		   = metap->capabilities;
