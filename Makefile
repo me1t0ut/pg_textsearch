@@ -203,8 +203,11 @@ test-index-info:
 	@$(MAKE) install-index-info-test
 	@$(MAKE) test-index-info-sql
 
+# index_info_concurrency needs dblink (contrib) for its second session, so
+# it runs here rather than in REGRESS.
 test-index-info-sql:
-	@$(pg_regress_installcheck) $(REGRESS_OPTS) index_info index_info_header
+	@$(pg_regress_installcheck) $(REGRESS_OPTS) index_info index_info_header \
+		index_info_concurrency
 
 # PGXS does not encode PG_CONFIG or ../../../src headers in object
 # dependencies, so always rebuild rather than reuse stale objects.
