@@ -8,10 +8,16 @@
 
 #include <access/amapi.h>
 #include <access/htup_details.h>
+#include <access/relation.h>
 #include <access/reloptions.h>
+#include <catalog/pg_class.h>
 #include <catalog/pg_opclass.h>
 #include <catalog/pg_type.h>
 #include <commands/vacuum.h>
+#include <miscadmin.h>
+#include <utils/acl.h>
+#include <utils/lsyscache.h>
+#include <utils/rel.h>
 #include <utils/syscache.h>
 
 #include "access/am.h"
@@ -204,4 +210,82 @@ tp_validate(Oid opclassoid)
 	ReleaseSysCache(tup);
 
 	return result;
+}
+
+/*
+ * Report a relation OID that does not name an existing relation.  Used on
+ * every path so that superusers and nonowners alike see a user-facing error
+ * rather than an internal cache-lookup or relation-open failure.
+ */
+static void
+tp_report_missing_relation(Oid relid)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_UNDEFINED_OBJECT),
+			 errmsg("relation with OID %u does not exist", relid)));
+}
+
+/*
+ * Open a physical bm25 index by OID, validating that it is in fact a bm25
+ * index with storage and (optionally) that the caller owns it.
+ */
+Relation
+tp_open_bm25_index(Oid indexoid, LOCKMODE lockmode, bool need_owner)
+{
+	Relation index_rel;
+
+	/*
+	 * Reject nonowners before queuing for a heavyweight lock. Recheck after
+	 * opening because ALTER OWNER can complete while this caller waits.
+	 * Check existence first: object_ownercheck() treats a missing OID as an
+	 * internal error.
+	 */
+	if (need_owner)
+	{
+		char *relname = get_rel_name(indexoid);
+
+		if (relname == NULL)
+			tp_report_missing_relation(indexoid);
+		if (!object_ownercheck(RelationRelationId, indexoid, GetUserId()))
+			aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_INDEX, relname);
+	}
+
+	/* The relation may also be dropped while this caller waits. */
+	index_rel = try_relation_open(indexoid, lockmode);
+	if (index_rel == NULL)
+		tp_report_missing_relation(indexoid);
+
+	if (index_rel->rd_indam == NULL ||
+		index_rel->rd_indam->ambuild != tp_build)
+	{
+		char *relname = pstrdup(RelationGetRelationName(index_rel));
+
+		relation_close(index_rel, lockmode);
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("\"%s\" is not a bm25 index", relname)));
+	}
+
+	if (index_rel->rd_rel->relkind == RELKIND_PARTITIONED_INDEX)
+	{
+		char *relname = pstrdup(RelationGetRelationName(index_rel));
+
+		relation_close(index_rel, lockmode);
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("\"%s\" is a partitioned bm25 index", relname),
+				 errhint("Use a physical partition index instead.")));
+	}
+
+	/* The relation exists and is locked, so this lookup cannot fail. */
+	if (need_owner &&
+		!object_ownercheck(RelationRelationId, indexoid, GetUserId()))
+	{
+		char *relname = pstrdup(RelationGetRelationName(index_rel));
+
+		relation_close(index_rel, lockmode);
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_INDEX, relname);
+	}
+
+	return index_rel;
 }

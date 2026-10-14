@@ -94,6 +94,13 @@ float8 tp_get_cached_score(void);
 PGDLLEXPORT Datum tp_handler(PG_FUNCTION_ARGS);
 
 /*
+ * Open a physical bm25 index by OID (access/handler.c).  Errors if the OID
+ * names no relation, a non-bm25 relation, or a partitioned bm25 index, and,
+ * when need_owner is set, if the caller does not own the index.
+ */
+Relation tp_open_bm25_index(Oid indexoid, LOCKMODE lockmode, bool need_owner);
+
+/*
  * Build utilities (am/build.c)
  */
 

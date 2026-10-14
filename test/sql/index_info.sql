@@ -25,7 +25,14 @@ SELECT bm25_index_info(NULL::regclass) IS NULL AS strict_null;
 SELECT * FROM bm25_index_info('index_info_docs'::regclass);
 SELECT * FROM bm25_index_info('index_info_docs_pkey'::regclass);
 SELECT * FROM bm25_index_info(0::oid::regclass);
+SELECT bm25_compact(0::oid::regclass);
 RESET ROLE;
+
+-- A missing OID is a user-facing error for superusers too, and for every
+-- caller of the shared bm25 open helper.
+SELECT * FROM bm25_index_info(0::oid::regclass);
+SELECT bm25_level_counts(0::oid::regclass);
+SELECT bm25_compact(0::oid::regclass);
 
 -- Ordinary ownership inheritance works; no inspection role is needed.
 SET ROLE index_info_member;

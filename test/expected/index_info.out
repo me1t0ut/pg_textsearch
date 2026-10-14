@@ -50,7 +50,17 @@ SELECT * FROM bm25_index_info('index_info_docs_pkey'::regclass);
 ERROR:  "index_info_docs_pkey" is not a bm25 index
 SELECT * FROM bm25_index_info(0::oid::regclass);
 ERROR:  relation with OID 0 does not exist
+SELECT bm25_compact(0::oid::regclass);
+ERROR:  relation with OID 0 does not exist
 RESET ROLE;
+-- A missing OID is a user-facing error for superusers too, and for every
+-- caller of the shared bm25 open helper.
+SELECT * FROM bm25_index_info(0::oid::regclass);
+ERROR:  relation with OID 0 does not exist
+SELECT bm25_level_counts(0::oid::regclass);
+ERROR:  relation with OID 0 does not exist
+SELECT bm25_compact(0::oid::regclass);
+ERROR:  relation with OID 0 does not exist
 -- Ordinary ownership inheritance works; no inspection role is needed.
 SET ROLE index_info_member;
 SELECT * FROM bm25_index_info('index_info_bm25'::regclass);

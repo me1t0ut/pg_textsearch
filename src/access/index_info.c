@@ -8,27 +8,10 @@
 
 #include <access/htup_details.h>
 #include <access/relation.h>
-#include <catalog/pg_class.h>
 #include <funcapi.h>
-#include <miscadmin.h>
-#include <utils/acl.h>
-#include <utils/lsyscache.h>
 
 #include "access/am.h"
 #include "index/metapage.h"
-
-static void
-check_index_info_owner(Oid index_oid)
-{
-	char *name = get_rel_name(index_oid);
-
-	if (name == NULL)
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_OBJECT),
-				 errmsg("relation with OID %u does not exist", index_oid)));
-	if (!object_ownercheck(RelationRelationId, index_oid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_INDEX, name);
-}
 
 PG_FUNCTION_INFO_V1(tp_index_info);
 
@@ -49,25 +32,8 @@ tp_index_info(PG_FUNCTION_ARGS)
 				 errmsg("bm25_index_info requires a composite result type")));
 	tupdesc = BlessTupleDesc(tupdesc);
 
-	/* Ownership can change while we wait for the relation lock. */
-	check_index_info_owner(index_oid);
-	index_rel = relation_open(index_oid, AccessShareLock);
-	check_index_info_owner(index_oid);
-
-	if (index_rel->rd_indam == NULL ||
-		index_rel->rd_indam->ambuild != tp_build)
-		ereport(ERROR,
-				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("\"%s\" is not a bm25 index",
-						RelationGetRelationName(index_rel))));
-	if (index_rel->rd_rel->relkind == RELKIND_PARTITIONED_INDEX)
-		ereport(ERROR,
-				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("\"%s\" is a partitioned bm25 index",
-						RelationGetRelationName(index_rel)),
-				 errhint("Use a physical partition index instead.")));
-
-	info = tp_inspect_metapage(index_rel);
+	index_rel = tp_open_bm25_index(index_oid, AccessShareLock, true);
+	info	  = tp_inspect_metapage(index_rel);
 	relation_close(index_rel, AccessShareLock);
 
 	values[0] = Int64GetDatum((int64)info.version);
