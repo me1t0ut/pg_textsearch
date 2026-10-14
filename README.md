@@ -475,6 +475,33 @@ SELECT bm25_spill_index('docs_idx');
 
 ## Monitoring
 
+### Index header
+
+Index owners can inspect the current header without superuser privileges:
+
+```sql
+SELECT * FROM bm25_index_info('public.docs_idx'::regclass);
+```
+
+Column | Meaning
+--- | ---
+`metapage_version` | Format version currently stored in the header
+`capabilities` | Raw capability bits; NULL in headers without this field
+`all_documents_indexed` | Value of the all-documents capability bit
+`legacy_docid_pointer_present` | Whether the legacy docid pointer is present
+
+This reads only the header and does not change it. Fields that cannot be
+safely decoded are NULL. Unsupported versions can still report their
+version; malformed headers raise an error. For a partitioned index, inspect
+its physical partition indexes instead of the parent.
+
+These are header facts, not a check of index contents: a capability bit is
+not a scan for missing rows, and a legacy pointer can be stale bookkeeping.
+The header version also does not identify the original build version.
+This function is new in the 1.6.0 development version, not in v1.5.1.
+
+### Index usage
+
 ```sql
 -- Check index usage
 SELECT s.schemaname, s.relname AS tablename,

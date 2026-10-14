@@ -34,6 +34,7 @@ OBJS = \
 	src/access/build_merge.o \
 	src/access/build_parallel.o \
 	src/access/compaction_api.o \
+	src/access/index_info.o \
 	src/access/boolean.o \
 	src/access/rls.o \
 	src/access/scan.o \
@@ -96,7 +97,7 @@ PG_CPPFLAGS += -Wno-unknown-warning-option -Wno-clobbered -Wno-packed-not-aligne
 # PG_CPPFLAGS += -DDEBUG_DUMP_INDEX
 
 # Test configuration
-REGRESS = preload abort aerodocs basic binary_io bmw bmw_skip_advance boolean_queries build_progress bulk_load cache_apply cache_memory_cap cache_source cache_spill catalog_stats chain_source compaction compaction_request compression concurrent_build coverage deletion vacuum vacuum_bitmap vacuum_extended vacuum_rebuild dropped empty explicit_index expression_index filtered_seed force_merge implicit index inheritance large_documents limits lock manyterms memory memtable_append memtable_page memtable_spill memtable_spill_dead memtable_reclaim merge mixed parallel_build parallel_bmw partitioned partitioned_many partial_index pgstats queries quoted_identifiers rescan rls schema scoring1 scoring2 scoring3 scoring4 scoring5 scoring6 security security_acl segment segment_integrity segment_reclaim tombstone_reuse tombstone_recover strings temp_table text_array text_config unsupported updates vector vector_v1_rejected unlogged_index wand
+REGRESS = preload abort aerodocs basic binary_io bmw bmw_skip_advance boolean_queries build_progress bulk_load cache_apply cache_memory_cap cache_source cache_spill catalog_stats chain_source compaction compaction_request compression concurrent_build coverage deletion vacuum vacuum_bitmap vacuum_extended vacuum_rebuild dropped empty explicit_index expression_index filtered_seed force_merge implicit index index_info inheritance large_documents limits lock manyterms memory memtable_append memtable_page memtable_spill memtable_spill_dead memtable_reclaim merge mixed parallel_build parallel_bmw partitioned partitioned_many partial_index pgstats queries quoted_identifiers rescan rls schema scoring1 scoring2 scoring3 scoring4 scoring5 scoring6 security security_acl segment segment_integrity segment_reclaim tombstone_reuse tombstone_recover strings temp_table text_array text_config unsupported updates vector vector_v1_rejected unlogged_index wand
 INJECTION_REGRESS = scoring_injection merge_injection compaction_injection \
 	compaction_error_injection \
 	force_merge_injection segment_reclaim_injection tombstone_bounds_injection \
@@ -185,6 +186,16 @@ test-build-memory-benchmark:
 # No server required: shared replication transport and cleanup contract.
 test-replication-transport:
 	@bash test/scripts/replication_transport_test.sh
+
+# The header fixture module is test-only, not part of normal installation.
+.PHONY: test-index-info install-index-info-test
+test-index-info: install-index-info-test
+	@$(pg_regress_installcheck) $(REGRESS_OPTS) index_info index_info_header
+
+install-index-info-test:
+	@$(MAKE) -C test/modules/index_info_test PG_CONFIG="$(PG_CONFIG)" clean
+	@$(MAKE) -C test/modules/index_info_test PG_CONFIG="$(PG_CONFIG)"
+	@$(MAKE) -C test/modules/index_info_test PG_CONFIG="$(PG_CONFIG)" install
 
 test-durable:
 	@echo "Running managed pg_durable compaction tests..."

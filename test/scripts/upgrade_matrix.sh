@@ -54,6 +54,8 @@ BASE_DIR="${BASE_DIR:-$REPO_ROOT/tmp_upgrade_matrix}"
 DATA_DIR="$BASE_DIR/pgdata"
 SOCK_DIR="$BASE_DIR/sock"
 STRICT_UNSPILLED="${STRICT_UNSPILLED:-0}"
+CURRENT_VERSION="$(awk -F"'" '/^default_version/ {print $2}' \
+  "$REPO_ROOT/pg_textsearch.control")"
 
 # Representative default matrix: one release per distinct on-disk
 # format combination.  0.5.0 = metapage v5 (legacy/REINDEX tier);
@@ -192,6 +194,17 @@ SELECT count(*) FROM (
 # ------------------------------------------------------------------ #
 is_legacy() { [[ "$1" =~ ^0\.[0-4]\. ]] || [[ "$1" == 0.5.0 ]]; }
 
+# Inspection must report actual old headers without upgrading them.
+check_header_info() { # $1=label $2=expected version $3=expected bits
+  local label="$1" expected="$2|$3" actual repeated
+  actual="$(scalar "SELECT metapage_version::text || '|' ||
+    coalesce(capabilities::text, 'NULL') FROM bm25_index_info('i');")"
+  repeated="$(scalar "SELECT metapage_version::text || '|' ||
+    coalesce(capabilities::text, 'NULL') FROM bm25_index_info('i');")"
+  [ "$actual" = "$expected" ] && [ "$repeated" = "$expected" ] ||
+    fail "$label: header facts $actual/$repeated != $expected"
+}
+
 run_compat_shape() { # $1=version $2=shape
   local v="$1" st="$2"
   fresh_cluster || { fail "$v/$st: cluster init failed"; return; }
@@ -205,12 +218,22 @@ run_compat_shape() { # $1=version $2=shape
   stop_pg
   build_install_current || { fail "current build/install failed"; return; }
   start_pg || { fail "$v/$st: NEW server failed to start (corruption?)"; return; }
+  runsql "ALTER EXTENSION pg_textsearch UPDATE TO '$CURRENT_VERSION';" || {
+    fail "$v/$st: SQL upgrade failed"; return;
+  }
+  case "$v" in
+    1.5.*) check_header_info "$v/$st" 9 1 ;;
+    1.3.1|1.4.*) check_header_info "$v/$st" 8 NULL ;;
+    1.3.0) check_header_info "$v/$st" 7 NULL ;;
+    *) check_header_info "$v/$st" 6 NULL ;;
+  esac
   local mark; mark="$(log_marker)"
   runsql "INSERT INTO d(c) VALUES ('alpha beta gamma writeprobe token');"
   post="$(scalar "$RECALL_Q")"
   forensic="$(log_since "$mark" | grep -c 'that may have held unspilled documents')"
   runsql "REINDEX INDEX i;"
   reidx="$(scalar "$RECALL_Q")"
+  check_header_info "$v/$st/rebuilt" 9 1
   stop_pg
 
   log "  [$v/$st] truth=$truth pre=$pre post=$post reindex=$reidx forensic=$forensic"
@@ -248,6 +271,10 @@ run_legacy() { # $1=version
   stop_pg
   build_install_current || { fail "current build/install failed"; return; }
   start_pg || { fail "$v(legacy): NEW server failed to start"; return; }
+  runsql "ALTER EXTENSION pg_textsearch UPDATE TO '$CURRENT_VERSION';" || {
+    fail "$v(legacy): SQL upgrade failed"; return;
+  }
+  check_header_info "$v/legacy" 5 NULL
 
   # Query WITHOUT reindex must ERROR cleanly and NOT crash the server.
   local out err_f; out="$(mktemp)"; err_f="$(mktemp)"
@@ -262,6 +289,7 @@ run_legacy() { # $1=version
 
   runsql "REINDEX INDEX i;"
   local reidx; reidx="$(scalar "$RECALL_Q")"
+  check_header_info "$v/legacy/rebuilt" 9 1
   stop_pg
   log "  [$v/legacy] truth=$truth pre=$pre post-REINDEX=$reidx"
   [ "$pre" = "$truth" ]   || fail "$v(legacy): OLD-binary recall $pre != truth $truth"

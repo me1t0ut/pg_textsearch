@@ -233,6 +233,91 @@ tp_get_metapage(Relation index)
 }
 
 /*
+ * Inspect a header without opening index state or invoking the normal
+ * reader's compatibility guard. Incompatible/unknown versions still have
+ * an inspectable magic/version prefix; never decode their other fields.
+ */
+void
+tp_inspect_metapage_page(Page page, TpIndexHeaderInfo *info)
+{
+	PageHeader		phdr = (PageHeader)page;
+	TpIndexMetaPage metap;
+	Size			content_offset = MAXALIGN(SizeOfPageHeaderData);
+	Size			required_size;
+
+	memset(info, 0, sizeof(*info));
+
+	if (PageIsNew(page) || PageGetPageSize(page) != BLCKSZ ||
+		PageGetPageLayoutVersion(page) != PG_PAGE_LAYOUT_VERSION ||
+		phdr->pd_lower < content_offset + sizeof(uint32) * 2 ||
+		phdr->pd_lower > phdr->pd_upper || phdr->pd_upper > phdr->pd_special ||
+		phdr->pd_special > BLCKSZ)
+		ereport(ERROR,
+				(errcode(ERRCODE_INDEX_CORRUPTED),
+				 errmsg("invalid bm25 metapage header")));
+
+	metap = (TpIndexMetaPage)PageGetContents(page);
+	if (metap->magic != TP_METAPAGE_MAGIC)
+		ereport(ERROR,
+				(errcode(ERRCODE_INDEX_CORRUPTED),
+				 errmsg("invalid bm25 metapage magic number")));
+
+	info->version = metap->version;
+	switch (metap->version)
+	{
+	case TP_METAPAGE_VERSION_V6:
+		required_size = TP_INDEX_METAPAGE_DATA_SIZE_V6;
+		break;
+	case TP_METAPAGE_VERSION_V7:
+		required_size = TP_INDEX_METAPAGE_DATA_SIZE_V7;
+		break;
+	case TP_METAPAGE_VERSION_V8:
+		required_size = TP_INDEX_METAPAGE_DATA_SIZE_V8;
+		break;
+	case 9:
+		required_size = offsetof(TpIndexMetaPageData, capabilities) +
+						sizeof(metap->capabilities);
+		break;
+	default:
+		return;
+	}
+
+	if (phdr->pd_lower < content_offset + required_size)
+		ereport(ERROR,
+				(errcode(ERRCODE_INDEX_CORRUPTED),
+				 errmsg("truncated bm25 metapage for version %u",
+						metap->version)));
+
+	info->legacy_docid_pointer_known   = true;
+	info->legacy_docid_pointer_present = BlockNumberIsValid(
+			metap->_unused_docid_page);
+	if (metap->version == 9)
+	{
+		info->capabilities_present = true;
+		info->capabilities		   = metap->capabilities;
+	}
+}
+
+TpIndexHeaderInfo
+tp_inspect_metapage(Relation index)
+{
+	Buffer			  buf;
+	TpIndexHeaderInfo info;
+
+	if (RelationGetNumberOfBlocks(index) == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INDEX_CORRUPTED),
+				 errmsg("bm25 index \"%s\" has no metapage",
+						RelationGetRelationName(index))));
+
+	buf = ReadBuffer(index, TP_METAPAGE_BLKNO);
+	LockBuffer(buf, BUFFER_LOCK_SHARE);
+	tp_inspect_metapage_page(BufferGetPage(buf), &info);
+	UnlockReleaseBuffer(buf);
+	return info;
+}
+
+/*
  * Read memtable_head_blkno from a metapage buffer page in a
  * version-tolerant way (issue #383).  See header for contract.
  */

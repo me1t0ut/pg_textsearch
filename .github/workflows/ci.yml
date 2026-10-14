@@ -147,7 +147,8 @@ jobs:
         fi
 
         createdb -h $PWD/tmp_check_shared -p 55433 contrib_regression
-        if ! make installcheck PGHOST=$PWD/tmp_check_shared PGPORT=55433; then
+        if ! make installcheck PGHOST=$PWD/tmp_check_shared PGPORT=55433 ||
+           ! make test-index-info PGHOST=$PWD/tmp_check_shared PGPORT=55433; then
           echo "Tests failed. Showing regression diffs:"
           if [ -f test/regression.diffs ]; then
             cat test/regression.diffs
@@ -501,7 +502,8 @@ jobs:
           exit 1
         fi
         createdb -h $PWD/tmp_check_shared -p 55433 contrib_regression
-        if ! make installcheck PGHOST=$PWD/tmp_check_shared PGPORT=55433; then
+        if ! make installcheck PGHOST=$PWD/tmp_check_shared PGPORT=55433 ||
+           ! make test-index-info PGHOST=$PWD/tmp_check_shared PGPORT=55433; then
           echo "Tests failed. Showing regression diffs:"
           [ -f test/regression.diffs ] && cat test/regression.diffs
           echo "PostgreSQL server log (last 200 lines):"

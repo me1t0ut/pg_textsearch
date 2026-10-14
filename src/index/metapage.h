@@ -165,6 +165,24 @@ StaticAssertDecl(
 		"backward-compat is broken");
 
 /*
+ * Header facts only. Presence flags distinguish absent/unknown fields from
+ * stored zero values. This is not an on-disk structure.
+ */
+typedef struct TpIndexHeaderInfo
+{
+	uint32 version;
+	uint32 capabilities;
+	bool   capabilities_present;
+	bool   legacy_docid_pointer_known;
+	bool   legacy_docid_pointer_present;
+} TpIndexHeaderInfo;
+
+/* Caller holds at least BUFFER_LOCK_SHARE on the page. */
+extern PGDLLEXPORT void
+tp_inspect_metapage_page(Page page, TpIndexHeaderInfo *info);
+extern TpIndexHeaderInfo tp_inspect_metapage(Relation index);
+
+/*
  * Metapage operations
  */
 extern void tp_init_metapage(Page page, Oid text_config_oid);
