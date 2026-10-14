@@ -99,9 +99,12 @@ as_pg() {
 # psql helpers: SQL always travels through a world-readable temp FILE,
 # never an inline -c string, to survive su-quoting.  scalar() echoes a
 # single value; runsql() runs quietly; run_capture() saves stderr.
+# runsql() ignores SQL errors (psql exits 0 without ON_ERROR_STOP);
+# use runsql_checked() where a failed statement must fail the scenario.
 _mktemp_sql() { local f; f="$(mktemp "${TMPDIR:-/tmp}/um.XXXXXX.sql")"; printf '%s\n' "$1" >"$f"; chmod 644 "$f"; echo "$f"; }
 scalar() { local f; f="$(_mktemp_sql "$1")"; as_pg psql -h "$SOCK_DIR" -p "$TEST_PORT" -d upg -tAqf "$f" 2>/dev/null; rm -f "$f"; }
 runsql() { local f; f="$(_mktemp_sql "$1")"; as_pg psql -h "$SOCK_DIR" -p "$TEST_PORT" -d upg -q -f "$f" >/dev/null 2>&1; local rc=$?; rm -f "$f"; return $rc; }
+runsql_checked() { local f; f="$(_mktemp_sql "$1")"; as_pg psql -h "$SOCK_DIR" -p "$TEST_PORT" -d upg -v ON_ERROR_STOP=1 -q -f "$f" >/dev/null 2>&1; local rc=$?; rm -f "$f"; return $rc; }
 run_capture() { local f; f="$(_mktemp_sql "$1")"; as_pg psql -h "$SOCK_DIR" -p "$TEST_PORT" -d upg -tAqf "$f" >"$2" 2>"$3"; rm -f "$f"; }
 
 cleanup() {
@@ -254,9 +257,23 @@ run_compat_shape() { # $1=version $2=shape
   check_header_facts "$v/$st" "$expect"
   old_facts="$HEADER_FACTS"
   legacy="${old_facts##*|}"
+  case "$legacy" in
+    true|false) ;;
+    *) fail "$v/$st: legacy pointer of a v6-v9 header is [$legacy], not true/false" ;;
+  esac
 
   local mark; mark="$(log_marker)"
-  runsql "INSERT INTO d(c) VALUES ('alpha beta gamma writeprobe token');"
+  # The new binary must be able to write to the old index and find what
+  # it wrote; otherwise an unchanged header below would pass vacuously.
+  runsql_checked "INSERT INTO d(c) VALUES ('alpha beta gamma writeprobe token');" ||
+    fail "$v/$st: write probe INSERT failed after the binary swap"
+  local probe
+  probe="$(scalar "SET enable_seqscan=off;
+    SELECT count(*) FROM (
+      SELECT c FROM d ORDER BY c <@> to_bm25query('writeprobe','i') LIMIT 1
+    ) s WHERE c LIKE '%writeprobe%';")"
+  [ "$probe" = 1 ] ||
+    fail "$v/$st: index scan did not return the write probe (got [$probe])"
   post="$(scalar "$RECALL_Q")"
   forensic="$(log_since "$mark" | grep -c 'that may have held unspilled documents')"
 
