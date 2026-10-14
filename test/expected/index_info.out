@@ -163,7 +163,27 @@ WHERE p.inhparent = 'index_info_parent'::regclass;
 (1 row)
 
 RESET ROLE;
--- Inspecting does not require maintenance or prevent a later rebuild.
+-- The relation lock is released when inspection returns, not held to the end
+-- of the transaction, so inspecting inside a long transaction does not block
+-- REINDEX or DROP INDEX.
+SET ROLE index_info_owner;
+BEGIN;
+SELECT * FROM bm25_index_info('index_info_bm25'::regclass);
+ metapage_version | capabilities | all_documents_indexed | legacy_docid_pointer_present 
+------------------+--------------+-----------------------+------------------------------
+                9 |            1 | t                     | f
+(1 row)
+
+SELECT count(*) AS locks_held FROM pg_locks
+WHERE pid = pg_backend_pid() AND relation = 'index_info_bm25'::regclass;
+ locks_held 
+------------
+          0
+(1 row)
+
+COMMIT;
+RESET ROLE;
+-- A rebuilt index reports a fresh header.
 REINDEX INDEX index_info_bm25;
 NOTICE:  BM25 index build started for relation index_info_bm25
 NOTICE:  Using text search configuration: english

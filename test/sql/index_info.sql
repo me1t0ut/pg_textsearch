@@ -99,7 +99,18 @@ CROSS JOIN LATERAL bm25_index_info(p.inhrelid::regclass) AS h
 WHERE p.inhparent = 'index_info_parent'::regclass;
 RESET ROLE;
 
--- Inspecting does not require maintenance or prevent a later rebuild.
+-- The relation lock is released when inspection returns, not held to the end
+-- of the transaction, so inspecting inside a long transaction does not block
+-- REINDEX or DROP INDEX.
+SET ROLE index_info_owner;
+BEGIN;
+SELECT * FROM bm25_index_info('index_info_bm25'::regclass);
+SELECT count(*) AS locks_held FROM pg_locks
+WHERE pid = pg_backend_pid() AND relation = 'index_info_bm25'::regclass;
+COMMIT;
+RESET ROLE;
+
+-- A rebuilt index reports a fresh header.
 REINDEX INDEX index_info_bm25;
 SET ROLE index_info_owner;
 SELECT * FROM bm25_index_info('index_info_bm25'::regclass);
