@@ -194,7 +194,8 @@ typedef struct TpIndexHeaderInfo
 /* Caller holds at least BUFFER_LOCK_SHARE on the page. */
 extern PGDLLEXPORT void
 tp_inspect_metapage_page(Page page, TpIndexHeaderInfo *info);
-extern TpIndexHeaderInfo tp_inspect_metapage(Relation index);
+/* Exported for the test-only fixture module, like the function above. */
+extern PGDLLEXPORT TpIndexHeaderInfo tp_inspect_metapage(Relation index);
 
 /*
  * Metapage operations

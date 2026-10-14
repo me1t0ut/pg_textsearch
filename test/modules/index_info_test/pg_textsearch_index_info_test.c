@@ -3,6 +3,7 @@
 
 #include <access/genam.h>
 #include <access/htup_details.h>
+#include <access/relation.h>
 #include <funcapi.h>
 #include <miscadmin.h>
 #include <storage/bufmgr.h>
@@ -28,6 +29,7 @@ index_info_test_lookup(const char *name)
 
 PG_FUNCTION_INFO_V1(index_info_test_header);
 PG_FUNCTION_INFO_V1(index_info_test_raw_page);
+PG_FUNCTION_INFO_V1(index_info_test_inspect);
 
 Datum
 index_info_test_header(PG_FUNCTION_ARGS)
@@ -94,4 +96,29 @@ index_info_test_raw_page(PG_FUNCTION_ARGS)
 	UnlockReleaseBuffer(buf);
 	index_close(index, AccessShareLock);
 	PG_RETURN_BYTEA_P(result);
+}
+
+/*
+ * Run the header I/O wrapper on any relation, skipping the bm25 checks in
+ * bm25_index_info(), so that a relation without block 0 can be tested.
+ */
+Datum
+index_info_test_inspect(PG_FUNCTION_ARGS)
+{
+	Relation		  rel;
+	TpIndexHeaderInfo info;
+	TpIndexHeaderInfo (*inspect)(Relation);
+	Datum (*to_datum)(FunctionCallInfo, const TpIndexHeaderInfo *);
+
+	if (!superuser())
+		elog(ERROR, "must be superuser to inspect test relations");
+	inspect = (TpIndexHeaderInfo (*)(Relation))index_info_test_lookup(
+			"tp_inspect_metapage");
+	to_datum = (Datum (*)(FunctionCallInfo, const TpIndexHeaderInfo *))
+			index_info_test_lookup("tp_index_header_info_datum");
+
+	rel	 = relation_open(PG_GETARG_OID(0), AccessShareLock);
+	info = inspect(rel);
+	relation_close(rel, AccessShareLock);
+	PG_RETURN_DATUM(to_datum(fcinfo, &info));
 }

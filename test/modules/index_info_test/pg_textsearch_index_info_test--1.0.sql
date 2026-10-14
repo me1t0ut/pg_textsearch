@@ -19,6 +19,15 @@ RETURNS bigint
 AS 'MODULE_PATHNAME', 'index_info_test_header'
 LANGUAGE C STRICT;
 
+CREATE FUNCTION index_info_test_inspect(
+    regclass,
+    OUT metapage_version bigint, OUT capabilities bigint,
+    OUT all_documents_indexed boolean,
+    OUT legacy_docid_pointer_present boolean)
+RETURNS record
+AS 'MODULE_PATHNAME', 'index_info_test_inspect'
+LANGUAGE C STRICT;
+
 CREATE FUNCTION index_info_test_raw_page(regclass) RETURNS bytea
 AS 'MODULE_PATHNAME', 'index_info_test_raw_page'
 LANGUAGE C STRICT;
@@ -30,3 +39,4 @@ REVOKE ALL ON FUNCTION
     index_info_test_header_scalar(bigint, bigint, boolean, integer, boolean)
     FROM PUBLIC;
 REVOKE ALL ON FUNCTION index_info_test_raw_page(regclass) FROM PUBLIC;
+REVOKE ALL ON FUNCTION index_info_test_inspect(regclass) FROM PUBLIC;

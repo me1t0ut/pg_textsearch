@@ -33,6 +33,14 @@ SELECT index_info_test_header_scalar(9, 1, false, 128, true);
 -- A subsequent successful call verifies error cleanup.
 SELECT * FROM index_info_test_header(9, 1, false, 128, true);
 
+-- A relation without block 0 is reported as missing its metapage rather
+-- than failing to read past the end of the file.  An empty table stands
+-- in for a truncated index file.
+CREATE TABLE index_info_no_blocks (body text);
+SELECT pg_relation_size('index_info_no_blocks') AS size;
+SELECT * FROM index_info_test_inspect('index_info_no_blocks');
+DROP TABLE index_info_no_blocks;
+
 -- The SQL wrapper leaves all bytes of a real metapage unchanged.
 CREATE TABLE index_info_unchanged (body text);
 INSERT INTO index_info_unchanged VALUES ('alpha'), ('');
