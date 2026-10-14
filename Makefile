@@ -188,13 +188,31 @@ test-replication-transport:
 	@bash test/scripts/replication_transport_test.sh
 
 # The header fixture module is test-only, not part of normal installation.
-.PHONY: test-index-info install-index-info-test
-test-index-info: install-index-info-test
+# Build and install are separate so the build can run as the invoking user
+# while the install alone uses sudo when the server's directories are
+# root-owned (packaged PostgreSQL in CI):
+#   make build-index-info-test
+#   sudo env "PATH=$PATH" make install-index-info-test
+#   make test-index-info-sql
+# test-index-info does all three for a server whose directories are
+# writable.
+.PHONY: test-index-info test-index-info-sql build-index-info-test \
+	install-index-info-test
+test-index-info:
+	@$(MAKE) build-index-info-test
+	@$(MAKE) install-index-info-test
+	@$(MAKE) test-index-info-sql
+
+test-index-info-sql:
 	@$(pg_regress_installcheck) $(REGRESS_OPTS) index_info index_info_header
 
-install-index-info-test:
+# PGXS does not encode PG_CONFIG or ../../../src headers in object
+# dependencies, so always rebuild rather than reuse stale objects.
+build-index-info-test:
 	@$(MAKE) -C test/modules/index_info_test PG_CONFIG="$(PG_CONFIG)" clean
 	@$(MAKE) -C test/modules/index_info_test PG_CONFIG="$(PG_CONFIG)"
+
+install-index-info-test:
 	@$(MAKE) -C test/modules/index_info_test PG_CONFIG="$(PG_CONFIG)" install
 
 test-durable:
