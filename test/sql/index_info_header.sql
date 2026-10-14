@@ -24,6 +24,10 @@ SELECT * FROM index_info_test_header(6, 1, false, 107, true);
 SELECT * FROM index_info_test_header(7, 1, false, 115, true);
 SELECT * FROM index_info_test_header(8, 1, false, 119, true);
 SELECT * FROM index_info_test_header(9, 1, false, 120, true);
+-- Version 9 needs the bytes through capabilities (124), not the padded
+-- struct size (128).
+SELECT * FROM index_info_test_header(9, 1, false, 124, true);
+SELECT * FROM index_info_test_header(9, 1, false, 123, true);
 -- A subsequent successful call verifies error cleanup.
 SELECT * FROM index_info_test_header(9, 1, false, 128, true);
 

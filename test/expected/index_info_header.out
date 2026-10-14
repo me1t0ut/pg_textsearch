@@ -84,6 +84,16 @@ SELECT * FROM index_info_test_header(8, 1, false, 119, true);
 ERROR:  truncated bm25 metapage for version 8
 SELECT * FROM index_info_test_header(9, 1, false, 120, true);
 ERROR:  truncated bm25 metapage for version 9
+-- Version 9 needs the bytes through capabilities (124), not the padded
+-- struct size (128).
+SELECT * FROM index_info_test_header(9, 1, false, 124, true);
+ metapage_version | capabilities | all_documents_indexed | legacy_docid_pointer_present 
+------------------+--------------+-----------------------+------------------------------
+                9 |            1 | t                     | f
+(1 row)
+
+SELECT * FROM index_info_test_header(9, 1, false, 123, true);
+ERROR:  truncated bm25 metapage for version 9
 -- A subsequent successful call verifies error cleanup.
 SELECT * FROM index_info_test_header(9, 1, false, 128, true);
  metapage_version | capabilities | all_documents_indexed | legacy_docid_pointer_present 
