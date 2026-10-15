@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792047793275,
+  "lastUpdate": 1792047798083,
   "repoUrl": "https://github.com/timescale/pg_textsearch",
   "entries": {
     "cranfield Benchmarks": [
@@ -271783,6 +271783,38 @@ window.BENCHMARK_DATA = {
           {
             "name": "paradedb_wikipedia (100.0K docs) - Index Size",
             "value": 59.62,
+            "unit": "MB"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Todd J. Green",
+            "username": "tjgreen42",
+            "email": "tjgreen@gmail.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "a5fdfeb1b747475ab2fe8b24abc7602dcb95a5a1",
+          "message": "Fix maintenance when pg_textsearch is preloaded but not installed (#543)\n\nPreloaded utility hooks tried to look up the BM25 access method even in\ndatabases without pg_textsearch, breaking database/schema REINDEX,\nuntargeted VACUUM FULL and CLUSTER, and REASSIGN OWNED.\n\nReturn an empty index list when the access method is absent. Add\nregression coverage before extension installation, with a BM25 index,\nand after dropping the extension in the same session.",
+          "timestamp": "2026-10-02T02:27:17Z",
+          "url": "https://github.com/timescale/pg_textsearch/commit/a5fdfeb1b747475ab2fe8b24abc7602dcb95a5a1"
+        },
+        "date": 1792047797316,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "paradedb_wikipedia (100.0K docs) - Index Build Time",
+            "value": 4459.402,
+            "unit": "ms"
+          },
+          {
+            "name": "paradedb_wikipedia (100.0K docs) - Index Size",
+            "value": 59.36,
             "unit": "MB"
           }
         ]
