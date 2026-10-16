@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792131543712,
+  "lastUpdate": 1792131547363,
   "repoUrl": "https://github.com/timescale/pg_textsearch",
   "entries": {
     "cranfield Benchmarks": [
@@ -47810,6 +47810,133 @@ window.BENCHMARK_DATA = {
           {
             "name": "msmarco (8.8M docs) - Query Latency After Update VACUUM",
             "value": 8,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Kunal Singh",
+            "username": "the-osiris",
+            "email": "91742676+the-osiris@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "4a05ce2a1f089b9eb29f470e762b8557a7ac8491",
+          "message": "Security hardening: Fix NULL crash, DEBUG1 leakage, schema squatting (#558)\n\n## Summary\n\nThree security vulnerabilities have been fixed:\n\n1. **Issue 1: NULL ORDER BY Crash (SIGSEGV)** [CRITICAL]\n- `src/access/scan.c::tp_rescan_process_orderby()` dereferenced ORDER BY\nclause without checking `SK_ISNULL` flag\n   - Now returns graceful error instead of backend crash\n   - Severity: DoS via SIGSEGV\n\n2. **Issue 2: DEBUG1 CTID/Score Leakage Before RLS** [MEDIUM]\n- `src/access/scan.c::tp_gettuple()` logged CTID and BM25 scores\nunconditionally before RLS filtering\n   - Now only logs when `tp_log_scores=ON` (default OFF)\n   - Severity: Information disclosure\n\n3. **Issue 3: Search-Path Type/Operator Squatting** [MEDIUM]\n- `src/planner/hooks.c::lookup_bm25_oids_internal()` used unqualified\n`TypenameGetTypid()`, allowing search-path manipulation\n- Now caches pg_textsearch schema OID and uses qualified\n`GetSysCacheOid2()` lookups\n   - Severity: Type confusion / shadow type injection\n\n## Changes\n\n**Source files modified:**\n- `src/access/scan.c` (2 fixes: SK_ISNULL guard + logging gate)\n- `src/planner/hooks.c` (1 fix: schema OID caching + qualified lookups)\n\n**Regression tests added:**\n- `test/sql/security_null_orderby.sql` (Issue 1)\n- `test/sql/security_debug_rls.sql` (Issue 2)\n- `test/sql/security_schema_squatting.sql` (Issue 3)\n\n## Compatibility\n\n- ✅ Backward compatible (no API changes)\n- ✅ Zero performance impact\n- ✅ Follows PostgreSQL 79-character line wrap convention\n- ✅ All three fixes are defensive-only (error-path guards)\n\n## Testing\n\n- Full `make installcheck` passes with all three tests included\n- Verified on PostgreSQL 15, 16, 17 with assertions enabled\n\n---------",
+          "timestamp": "2026-10-15T18:34:51Z",
+          "url": "https://github.com/timescale/pg_textsearch/commit/4a05ce2a1f089b9eb29f470e762b8557a7ac8491"
+        },
+        "date": 1792131546729,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "msmarco (8.8M docs) - Index Build Time",
+            "value": 132136.012,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco (8.8M docs) - 1 Token Query (p50)",
+            "value": 0.33,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco (8.8M docs) - 2 Token Query (p50)",
+            "value": 0.71,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco (8.8M docs) - 3 Token Query (p50)",
+            "value": 1.48,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco (8.8M docs) - 4 Token Query (p50)",
+            "value": 2.52,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco (8.8M docs) - 5 Token Query (p50)",
+            "value": 4,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco (8.8M docs) - 6 Token Query (p50)",
+            "value": 6.3,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco (8.8M docs) - 7 Token Query (p50)",
+            "value": 9.75,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco (8.8M docs) - 8+ Token Query (p50)",
+            "value": 14.77,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco (8.8M docs) - Weighted Latency (p50, ms)",
+            "value": 2.61,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco (8.8M docs) - Weighted Throughput (avg ms/query)",
+            "value": 3.35,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco (8.8M docs) - Index Size",
+            "value": 2432.6,
+            "unit": "MB"
+          },
+          {
+            "name": "msmarco (8.8M docs) - Partial VACUUM (concentrated delete)",
+            "value": 1505.563,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco (8.8M docs) - Full VACUUM (uniform delete)",
+            "value": 9984.002,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco (8.8M docs) - Full VACUUM (uniform update)",
+            "value": 8057.41,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco (8.8M docs) - Index Size After Partial VACUUM",
+            "value": 2435,
+            "unit": "MB"
+          },
+          {
+            "name": "msmarco (8.8M docs) - Index Size After Full VACUUM",
+            "value": 2435,
+            "unit": "MB"
+          },
+          {
+            "name": "msmarco (8.8M docs) - Query Latency After Partial VACUUM",
+            "value": 5.45,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco (8.8M docs) - Query Latency After Full VACUUM",
+            "value": 5,
+            "unit": "ms"
+          },
+          {
+            "name": "msmarco (8.8M docs) - Index Size After Update VACUUM",
+            "value": 2435,
+            "unit": "MB"
+          },
+          {
+            "name": "msmarco (8.8M docs) - Query Latency After Update VACUUM",
+            "value": 5.04,
             "unit": "ms"
           }
         ]
