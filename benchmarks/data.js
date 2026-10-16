@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792133862365,
+  "lastUpdate": 1792133867028,
   "repoUrl": "https://github.com/timescale/pg_textsearch",
   "entries": {
     "cranfield Benchmarks": [
@@ -332206,6 +332206,88 @@ window.BENCHMARK_DATA = {
           {
             "name": "paradedb_msmarco_concurrent - Throughput (avg ms/query)",
             "value": 77.13,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Kunal Singh",
+            "username": "the-osiris",
+            "email": "91742676+the-osiris@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "4a05ce2a1f089b9eb29f470e762b8557a7ac8491",
+          "message": "Security hardening: Fix NULL crash, DEBUG1 leakage, schema squatting (#558)\n\n## Summary\n\nThree security vulnerabilities have been fixed:\n\n1. **Issue 1: NULL ORDER BY Crash (SIGSEGV)** [CRITICAL]\n- `src/access/scan.c::tp_rescan_process_orderby()` dereferenced ORDER BY\nclause without checking `SK_ISNULL` flag\n   - Now returns graceful error instead of backend crash\n   - Severity: DoS via SIGSEGV\n\n2. **Issue 2: DEBUG1 CTID/Score Leakage Before RLS** [MEDIUM]\n- `src/access/scan.c::tp_gettuple()` logged CTID and BM25 scores\nunconditionally before RLS filtering\n   - Now only logs when `tp_log_scores=ON` (default OFF)\n   - Severity: Information disclosure\n\n3. **Issue 3: Search-Path Type/Operator Squatting** [MEDIUM]\n- `src/planner/hooks.c::lookup_bm25_oids_internal()` used unqualified\n`TypenameGetTypid()`, allowing search-path manipulation\n- Now caches pg_textsearch schema OID and uses qualified\n`GetSysCacheOid2()` lookups\n   - Severity: Type confusion / shadow type injection\n\n## Changes\n\n**Source files modified:**\n- `src/access/scan.c` (2 fixes: SK_ISNULL guard + logging gate)\n- `src/planner/hooks.c` (1 fix: schema OID caching + qualified lookups)\n\n**Regression tests added:**\n- `test/sql/security_null_orderby.sql` (Issue 1)\n- `test/sql/security_debug_rls.sql` (Issue 2)\n- `test/sql/security_schema_squatting.sql` (Issue 3)\n\n## Compatibility\n\n- ✅ Backward compatible (no API changes)\n- ✅ Zero performance impact\n- ✅ Follows PostgreSQL 79-character line wrap convention\n- ✅ All three fixes are defensive-only (error-path guards)\n\n## Testing\n\n- Full `make installcheck` passes with all three tests included\n- Verified on PostgreSQL 15, 16, 17 with assertions enabled\n\n---------",
+          "timestamp": "2026-10-15T18:34:51Z",
+          "url": "https://github.com/timescale/pg_textsearch/commit/4a05ce2a1f089b9eb29f470e762b8557a7ac8491"
+        },
+        "date": 1792133866123,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "paradedb_msmarco_concurrent - Index Build Time",
+            "value": 3.736,
+            "unit": "ms"
+          },
+          {
+            "name": "paradedb_msmarco_concurrent - Insert Time",
+            "value": 0.371,
+            "unit": "ms"
+          },
+          {
+            "name": "paradedb_msmarco_concurrent - Concurrent Insert Time",
+            "value": 1181305.645513,
+            "unit": "ms"
+          },
+          {
+            "name": "paradedb_msmarco_concurrent - 1 Token Query (p50)",
+            "value": 74.81,
+            "unit": "ms"
+          },
+          {
+            "name": "paradedb_msmarco_concurrent - 2 Token Query (p50)",
+            "value": 73.84,
+            "unit": "ms"
+          },
+          {
+            "name": "paradedb_msmarco_concurrent - 3 Token Query (p50)",
+            "value": 78.85,
+            "unit": "ms"
+          },
+          {
+            "name": "paradedb_msmarco_concurrent - 4 Token Query (p50)",
+            "value": 81.28,
+            "unit": "ms"
+          },
+          {
+            "name": "paradedb_msmarco_concurrent - 5 Token Query (p50)",
+            "value": 83.03,
+            "unit": "ms"
+          },
+          {
+            "name": "paradedb_msmarco_concurrent - 6 Token Query (p50)",
+            "value": 90.12,
+            "unit": "ms"
+          },
+          {
+            "name": "paradedb_msmarco_concurrent - 7 Token Query (p50)",
+            "value": 90.77,
+            "unit": "ms"
+          },
+          {
+            "name": "paradedb_msmarco_concurrent - 8+ Token Query (p50)",
+            "value": 97.72,
+            "unit": "ms"
+          },
+          {
+            "name": "paradedb_msmarco_concurrent - Throughput (avg ms/query)",
+            "value": 78.73,
             "unit": "ms"
           }
         ]
