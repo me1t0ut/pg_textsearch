@@ -111,6 +111,25 @@ WHERE pid = pg_backend_pid() AND relation = 'index_info_bm25'::regclass;
 COMMIT;
 RESET ROLE;
 
+-- A CREATE INDEX CONCURRENTLY whose build fails leaves an invalid index with
+-- no blocks.  It has no header yet, so every fact is NULL rather than an
+-- error that would abort an inventory of all indexes.
+CREATE INDEX CONCURRENTLY index_info_unbuilt ON index_info_docs
+    USING bm25(body) WITH (text_config = 'index_info_no_such_config');
+SELECT i.indisvalid, pg_relation_size(i.indexrelid) AS bytes
+FROM pg_index AS i WHERE i.indexrelid = 'index_info_unbuilt'::regclass;
+SELECT * FROM bm25_index_info('index_info_unbuilt'::regclass);
+-- The inventory query from the documentation survives the leftover.
+SELECT c.oid::regclass AS index, i.indisvalid, h.*
+FROM pg_class AS c
+JOIN pg_am AS am ON am.oid = c.relam
+JOIN pg_index AS i ON i.indexrelid = c.oid
+CROSS JOIN LATERAL bm25_index_info(c.oid::regclass) AS h
+WHERE am.amname = 'bm25' AND c.relkind = 'i'
+  AND i.indrelid = 'index_info_docs'::regclass
+ORDER BY 1;
+DROP INDEX index_info_unbuilt;
+
 -- A rebuilt index reports a fresh header.
 REINDEX INDEX index_info_bm25;
 SET ROLE index_info_owner;

@@ -184,6 +184,7 @@ StaticAssertDecl(
  */
 typedef struct TpIndexHeaderInfo
 {
+	bool   header_present; /* false: no block 0 yet (unbuilt index) */
 	uint32 version;
 	uint32 capabilities;
 	bool   capabilities_present;

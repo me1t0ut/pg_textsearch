@@ -254,6 +254,7 @@ tp_inspect_metapage_page(Page page, TpIndexHeaderInfo *info)
 	Size			required_size;
 
 	memset(info, 0, sizeof(*info));
+	info->header_present = true;
 
 	/*
 	 * The buffer manager's PageIsVerified() already rejects inconsistent
@@ -319,10 +320,25 @@ tp_inspect_metapage(Relation index)
 	TpIndexHeaderInfo info;
 
 	if (RelationGetNumberOfBlocks(index) == 0)
+	{
+		/*
+		 * CREATE INDEX CONCURRENTLY commits an invalid index, with an empty
+		 * relation, before building it.  If the build fails before writing
+		 * the metapage, that index is left with no header at all.  Report
+		 * that rather than erroring, so that inspecting every index (e.g.
+		 * through a LATERAL join) survives such a leftover.  A valid index
+		 * without block 0 is corrupt.
+		 */
+		if (index->rd_index != NULL && !index->rd_index->indisvalid)
+		{
+			memset(&info, 0, sizeof(info));
+			return info;
+		}
 		ereport(ERROR,
 				(errcode(ERRCODE_INDEX_CORRUPTED),
 				 errmsg("bm25 index \"%s\" has no metapage",
 						RelationGetRelationName(index))));
+	}
 
 	buf = ReadBuffer(index, TP_METAPAGE_BLKNO);
 	LockBuffer(buf, BUFFER_LOCK_SHARE);

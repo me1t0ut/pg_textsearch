@@ -16,7 +16,8 @@
 #include "index/metapage.h"
 
 /*
- * Absent or undecodable fields become NULL rather than fabricated zeroes.
+ * Absent or undecodable fields become NULL rather than fabricated zeroes;
+ * every field is NULL when the index has no header yet.
  */
 Datum
 tp_index_header_info_datum(
@@ -32,6 +33,12 @@ tp_index_header_info_datum(
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("bm25_index_info requires a composite result type")));
 	tupdesc = BlessTupleDesc(tupdesc);
+
+	if (!info->header_present)
+	{
+		nulls[0] = true;
+		return HeapTupleGetDatum(heap_form_tuple(tupdesc, values, nulls));
+	}
 
 	values[0] = Int64GetDatum((int64)info->version);
 	if (info->capabilities_present)

@@ -184,6 +184,42 @@ WHERE pid = pg_backend_pid() AND relation = 'index_info_bm25'::regclass;
 
 COMMIT;
 RESET ROLE;
+-- A CREATE INDEX CONCURRENTLY whose build fails leaves an invalid index with
+-- no blocks.  It has no header yet, so every fact is NULL rather than an
+-- error that would abort an inventory of all indexes.
+CREATE INDEX CONCURRENTLY index_info_unbuilt ON index_info_docs
+    USING bm25(body) WITH (text_config = 'index_info_no_such_config');
+NOTICE:  BM25 index build started for relation index_info_unbuilt
+ERROR:  text search configuration "index_info_no_such_config" does not exist
+SELECT i.indisvalid, pg_relation_size(i.indexrelid) AS bytes
+FROM pg_index AS i WHERE i.indexrelid = 'index_info_unbuilt'::regclass;
+ indisvalid | bytes 
+------------+-------
+ f          |     0
+(1 row)
+
+SELECT * FROM bm25_index_info('index_info_unbuilt'::regclass);
+ metapage_version | capabilities | all_documents_indexed | legacy_docid_pointer_present 
+------------------+--------------+-----------------------+------------------------------
+                  |              |                       | 
+(1 row)
+
+-- The inventory query from the documentation survives the leftover.
+SELECT c.oid::regclass AS index, i.indisvalid, h.*
+FROM pg_class AS c
+JOIN pg_am AS am ON am.oid = c.relam
+JOIN pg_index AS i ON i.indexrelid = c.oid
+CROSS JOIN LATERAL bm25_index_info(c.oid::regclass) AS h
+WHERE am.amname = 'bm25' AND c.relkind = 'i'
+  AND i.indrelid = 'index_info_docs'::regclass
+ORDER BY 1;
+       index        | indisvalid | metapage_version | capabilities | all_documents_indexed | legacy_docid_pointer_present 
+--------------------+------------+------------------+--------------+-----------------------+------------------------------
+ index_info_bm25    | t          |                9 |            1 | t                     | f
+ index_info_unbuilt | f          |                  |              |                       | 
+(2 rows)
+
+DROP INDEX index_info_unbuilt;
 -- A rebuilt index reports a fresh header.
 REINDEX INDEX index_info_bm25;
 NOTICE:  BM25 index build started for relation index_info_bm25
