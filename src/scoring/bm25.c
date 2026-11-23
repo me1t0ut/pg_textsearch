@@ -263,8 +263,8 @@ tp_score_documents(
 	}
 
 	/*
-	 * BMW fast path for multi-term queries (query_term_count >= 2).
-	 * Uses block-level upper bounds to skip non-contributing blocks.
+	 * Multi-term top-k scoring. Segment scans use windowed MaxScore or
+	 * Block-Max WAND.
 	 */
 	{
 		uint32	  *doc_freqs;
@@ -295,7 +295,7 @@ tp_score_documents(
 		/* Allocate scores array */
 		scores = (float4 *)palloc(max_results * sizeof(float4));
 
-		/* Run multi-term BMW scoring */
+		/* Run multi-term top-k scoring. */
 		result_count = tp_score_multi_term_bmw(
 				local_state,
 				index_relation,
@@ -334,6 +334,10 @@ tp_score_documents(
 						 : 0.0,
 				 (unsigned long)stats.seeks_performed,
 				 (unsigned long)stats.docs_in_results);
+			if (stats.maxscore_windows_pruned > 0)
+				elog(LOG,
+					 "MaxScore stats: " UINT64_FORMAT " whole windows pruned",
+					 stats.maxscore_windows_pruned);
 		}
 
 		*result_scores = scores;

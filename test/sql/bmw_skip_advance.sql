@@ -105,4 +105,30 @@ SELECT count(*) FROM (
 ) sub;
 
 DROP TABLE bmw_skip_advance;
+
+-- The first window fills the heap with high-scoring matches. Later
+-- windows contain only low-scoring postings and are rejected outright.
+CREATE TEMP TABLE maxscore_log_probe (id integer, body text);
+INSERT INTO maxscore_log_probe
+SELECT g, CASE WHEN g <= 100 THEN repeat('alpha beta ', 100)
+               WHEN g % 2 = 0 THEN 'alpha ' || repeat('padding ', 100)
+               ELSE 'beta ' || repeat('padding ', 100) END
+FROM generate_series(1, 25000) g;
+CREATE INDEX maxscore_log_probe_idx ON maxscore_log_probe USING bm25(body)
+    WITH (text_config = 'simple');
+
+SET log_statement = none;
+SET client_min_messages = log;
+SET pg_textsearch.log_bmw_stats = on;
+\pset format unaligned
+SELECT count(*) = 10 AND max(id) <= 100 AS high_scoring_results FROM (
+    SELECT id FROM maxscore_log_probe
+    ORDER BY body <@> to_bm25query('alpha beta', 'maxscore_log_probe_idx')
+    LIMIT 10
+) sub;
+\pset format aligned
+RESET pg_textsearch.log_bmw_stats;
+RESET client_min_messages;
+RESET log_statement;
+DROP TABLE maxscore_log_probe;
 DROP EXTENSION pg_textsearch CASCADE;

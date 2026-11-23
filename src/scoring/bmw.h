@@ -2,10 +2,9 @@
  * Copyright (c) 2025-2026 Tiger Data, Inc.
  * Licensed under the PostgreSQL License. See LICENSE for details.
  *
- * bmw.h - Block-Max WAND query optimization
+ * bmw.h - Block-Max WAND and windowed MaxScore for top-k queries
  *
- * Implements early termination for top-k queries by computing upper bounds
- * on block scores and skipping blocks that cannot contribute to results.
+ * Both algorithms use block-level score bounds to prune posting lists.
  */
 #pragma once
 
@@ -115,8 +114,9 @@ typedef struct TpBMWStats
 	uint64 segment_docs_scored; /* Documents scored from segments */
 	uint64 docs_in_results;		/* Documents in final results */
 
-	uint64 seeks_performed;	  /* Binary search seeks executed */
-	uint64 dead_docs_skipped; /* Dead docs filtered by alive bitset */
+	uint64 seeks_performed;			/* Binary search seeks executed */
+	uint64 dead_docs_skipped;		/* Dead docs filtered by alive bitset */
+	uint64 maxscore_windows_pruned; /* Whole windows rejected by MaxScore */
 } TpBMWStats;
 
 /*
@@ -133,7 +133,10 @@ typedef struct TpBMWFilter
 			void *state, TpDataSource *source, ItemPointer ctid);
 	bool (*segment_matches)(
 			void *state, TpSegmentReader *reader, uint32 doc_id);
-	/* false uses ordinary BMW; UINT32_MAX means no candidates remain. */
+	/*
+	 * A false return leaves traversal to the scorer. UINT32_MAX means
+	 * no candidates remain.
+	 */
 	bool (*segment_next)(
 			void			*state,
 			TpSegmentReader *reader,
@@ -173,10 +176,9 @@ extern int tp_score_single_term_bmw(
 		TpBMWFilter					 *filter);
 
 /*
- * Score documents using multi-term Block-Max WAND.
+ * Score multi-term queries across the memtable and segments.
  *
- * For multi-term queries, uses the WAND algorithm with block-level
- * upper bounds to find top-k documents efficiently.
+ * Each segment uses windowed MaxScore or Block-Max WAND.
  *
  * `memtable_src` is the already-built chain source over the on-disk
  * memtable chain (may be NULL when the chain is empty).  The caller

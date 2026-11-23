@@ -255,4 +255,53 @@ SELECT count(*) = 1 AND
 FROM ranked_recheck_scores;
 DROP TABLE ranked_recheck_scores;
 DROP TABLE ranked_disjoint_docs;
+
+\pset format unaligned
+-- Two active ranking terms and enough postings to use windowed MaxScore.
+CREATE TABLE windowed_ranked_docs (id integer PRIMARY KEY, body text);
+INSERT INTO windowed_ranked_docs
+SELECT g, CASE
+    WHEN g % 10 = 0 THEN 'alpha gap beta eligible ' || repeat('padding ', 16)
+    WHEN g <= 300 THEN repeat('alpha ', 40) || 'gap ' || repeat('beta ', 40)
+    WHEN g % 2 = 0 THEN 'alpha ' || repeat('padding ', 16)
+    ELSE 'beta ' || repeat('padding ', 16)
+END
+FROM generate_series(1, 16400) g;
+INSERT INTO windowed_ranked_docs VALUES
+    (16401, 'alpha alpha alpha alpha beta beta eligible raremarker'),
+    (16402, 'alpha alpha beta beta eligible');
+CREATE INDEX windowed_ranked_idx ON windowed_ranked_docs USING bm25(body)
+    WITH (text_config = 'simple');
+
+SELECT pg_temp.ranked_boolean_plan($q$
+    SELECT id FROM windowed_ranked_docs
+    WHERE body @@ 'alpha & eligible'::tsquery
+    ORDER BY body <@> to_bm25query('alpha beta', 'windowed_ranked_idx')
+    LIMIT 1
+$q$) AS dense_filter_ordered_scan;
+
+-- High scoring nonmatches cannot fill the heap or cause a refill.
+SELECT bm25_debug_scoring_passes(true) >= 0 AS reset_passes;
+SELECT id FROM windowed_ranked_docs
+WHERE body @@ 'alpha & eligible'::tsquery
+ORDER BY body <@> to_bm25query('alpha beta', 'windowed_ranked_idx')
+LIMIT 1;
+SELECT bm25_debug_scoring_passes(true) = 1 AS dense_filter_before_topk;
+
+-- Phrase false positives can fill the initial internal batch and be
+-- rejected by the heap recheck. The ordered scan must refill.
+SELECT array_agg(id ORDER BY id) AS windowed_phrase_matches FROM (
+    SELECT id FROM windowed_ranked_docs
+    WHERE body @@ 'alpha <-> beta'::tsquery
+    ORDER BY body <@> to_bm25query('alpha beta', 'windowed_ranked_idx')
+    LIMIT 2
+) s;
+SELECT bm25_debug_scoring_passes(true) > 1 AS windowed_phrase_refill;
+
+-- A selective filter still drives the ranking cursors from its candidates.
+SELECT id FROM windowed_ranked_docs
+WHERE body @@ 'alpha & raremarker'::tsquery
+ORDER BY body <@> to_bm25query('alpha beta', 'windowed_ranked_idx')
+LIMIT 1;
+DROP TABLE windowed_ranked_docs;
 DROP EXTENSION pg_textsearch;
