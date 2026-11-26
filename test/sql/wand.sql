@@ -129,4 +129,51 @@ SELECT validate_bm25_scoring('wand_many_terms', 'content',
 
 DROP TABLE wand_many_terms;
 
+-- WAND reorders posting cursors around partial matches. All three copies
+-- of the full text must survive the top-score tie.
+\pset format unaligned
+SET enable_seqscan = off;
+SET client_min_messages = warning;
+CREATE TABLE wand_ties (id int, body text);
+INSERT INTO wand_ties VALUES
+    (1, 'aa bb cc dd ee'), (2, 'aa bb cc dd zz'),
+    (3, 'aa bb cc dd ee'), (4, 'bb dd ee zz zz'),
+    (5, 'aa bb cc dd ee'), (6, 'aa bb cc dd zz');
+CREATE INDEX wand_ties_idx ON wand_ties USING bm25(body)
+    WITH (text_config='simple');
+SELECT array_agg(id ORDER BY id) AS tied FROM (
+    SELECT id FROM wand_ties
+    ORDER BY body <@> to_bm25query('aa bb cc dd ee', 'wand_ties_idx')
+    FETCH FIRST 1 ROW WITH TIES
+) ranked;
+DROP TABLE wand_ties;
+
+-- A dense segment runs MaxScore. The extra identical row is first in
+-- the memtable, then in a one-document segment scored by WAND.
+SET pg_textsearch.memtable_pages_threshold = 0;
+SET pg_textsearch.bulk_load_threshold = 0;
+CREATE TABLE spill_ties (body text);
+INSERT INTO spill_ties SELECT 'aa bb cc dd ee ff' FROM generate_series(1,300);
+CREATE INDEX spill_ties_idx ON spill_ties USING bm25(body)
+    WITH (text_config='simple');
+INSERT INTO spill_ties VALUES ('aa bb cc dd ee ff');
+CREATE VIEW spill_ties_top AS
+    SELECT body <@> to_bm25query('aa bb cc dd ee ff','spill_ties_idx') AS score
+    FROM spill_ties ORDER BY score FETCH FIRST 1 ROW WITH TIES;
+-- Score one row without ORDER BY to compare standalone at heap precision.
+SELECT count(*) AS before_spill,
+       bool_and(score::real = (SELECT (body <@>
+           to_bm25query('aa bb cc dd ee ff','spill_ties_idx'))::real
+           FROM spill_ties LIMIT 1)) AS same
+FROM spill_ties_top;
+SELECT bm25_spill_index('spill_ties_idx') IS NOT NULL AS spilled;
+SELECT count(*) AS after_spill FROM spill_ties_top;
+DROP VIEW spill_ties_top;
+DROP TABLE spill_ties;
+RESET pg_textsearch.bulk_load_threshold;
+RESET pg_textsearch.memtable_pages_threshold;
+RESET client_min_messages;
+RESET enable_seqscan;
+\pset format aligned
+
 DROP EXTENSION pg_textsearch CASCADE;

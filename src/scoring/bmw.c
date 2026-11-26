@@ -890,9 +890,8 @@ score_memtable_multi_term(
 
 			if (!found)
 			{
-				entry->ctid		  = *ctid;
-				entry->score	  = term_score;
-				entry->doc_length = (float4)doc_len;
+				entry->ctid	 = *ctid;
+				entry->score = term_score;
 			}
 			else
 			{
@@ -911,11 +910,13 @@ score_memtable_multi_term(
 		hash_seq_init(&seq, doc_accum);
 		while ((entry = hash_seq_search(&seq)) != NULL)
 		{
-			if (!tp_topk_dominated(heap, entry->score) &&
+			float4 score = (float4)entry->score;
+
+			if (!tp_topk_dominated(heap, score) &&
 				(filter == NULL ||
 				 filter->memtable_matches(
 						 filter->state, source, &entry->ctid)))
-				tp_topk_add_memtable(heap, entry->ctid, entry->score);
+				tp_topk_add_memtable(heap, entry->ctid, score);
 
 			if (stats)
 				stats->memtable_docs++;
@@ -1297,7 +1298,7 @@ find_wand_pivot(
 		int			 *pivot_len_out,
 		uint32		 *pivot_doc_id_out)
 {
-	float4 accumulated = 0.0f;
+	double accumulated = 0.0;
 	int	   i;
 
 	for (i = 0; i < term_count; i++)
@@ -1307,7 +1308,7 @@ find_wand_pivot(
 			break; /* No more active terms */
 
 		accumulated += terms[i]->max_score;
-		if (accumulated > threshold)
+		if (accumulated > (double)threshold)
 		{
 			/*
 			 * Found pivot: terms[i] is the pivot term.
@@ -1337,10 +1338,10 @@ find_wand_pivot(
  * [0..pivot_len-1] since they're the only ones at or before
  * the pivot.
  */
-static float4
+static double
 compute_block_max_at_pivot(TpTermState **terms, int pivot_len)
 {
-	float4 upper_bound = 0.0f;
+	double upper_bound = 0.0;
 	int	   i;
 
 	for (i = 0; i < pivot_len; i++)
@@ -1562,7 +1563,8 @@ score_pivot_document(
 		float4		  b,
 		float4		  avg_doc_len)
 {
-	float4 doc_score = 0.0f;
+	/* Match the MaxScore and memtable rounding at the heap boundary. */
+	double doc_score = 0.0;
 	int	   i;
 
 	for (i = 0; i < pivot_len; i++)
@@ -1586,7 +1588,7 @@ score_pivot_document(
 		doc_score += term_score;
 	}
 
-	return doc_score;
+	return (float4)doc_score;
 }
 
 /*
@@ -1739,6 +1741,19 @@ maxscore_term_contribution(TpTermState *ts, const TpMaxScoreParams *params)
 			&ts->iter.block_postings[ts->iter.current_in_block]);
 }
 
+static pg_noinline void
+maxscore_out_of_order_error(TpSegmentReader *reader)
+{
+	const char *index_name = reader && reader->index
+									 ? RelationGetRelationName(reader->index)
+									 : "<unknown>";
+
+	ereport(ERROR,
+			(errcode(ERRCODE_DATA_CORRUPTED),
+			 errmsg("out-of-order posting in index \"%s\"", index_name),
+			 errhint("Rebuild the index with REINDEX.")));
+}
+
 /*
  * The chunk consumed postings [old_index,index). At a batch boundary retain
  * index's unconsumed posting. At block end let the original advance helper
@@ -1761,6 +1776,68 @@ maxscore_finish_chunk(TpTermState *ts, uint32 index, uint32 block_count)
 }
 
 /*
+ * Single essential list: scan ascending postings directly into matches[].
+ */
+static pg_noinline int
+maxscore_one_essential_matches(
+		TpSegmentReader		   *reader,
+		TpTermState			   *ts,
+		const TpMaxScoreParams *params,
+		uint32					base,
+		uint32					batch_end,
+		TpMaxScoreMatch		   *matches,
+		double					weak_bound,
+		double					rounding,
+		float4					threshold,
+		TpBMWStats			   *stats)
+{
+	const float4  idf			= ts->idf;
+	const float4  k1_plus_one	= params->k1_plus_one;
+	const float4  query_freq	= (float4)ts->query_freq;
+	const float4 *norms			= params->k1_len_norm;
+	int			  matches_count = 0;
+	uint32		  min_doc		= base;
+
+	Assert(batch_end >= base && batch_end - base <= TP_MAXSCORE_BATCH);
+
+	while (term_current_doc_id(ts) < batch_end)
+	{
+		const TpBlockPosting *postings	  = ts->iter.block_postings;
+		uint32				  index		  = ts->iter.current_in_block;
+		uint32				  block_count = ts->iter.skip_entry.doc_count;
+		uint32				  start_index = index;
+
+		CHECK_FOR_INTERRUPTS();
+		if (stats && index == 0)
+			stats->blocks_scanned++;
+		while (index < block_count && postings[index].doc_id < batch_end)
+		{
+			const TpBlockPosting *bp	= &postings[index];
+			uint32				  doc	= bp->doc_id;
+			double				  score = 0.0;
+
+			if (unlikely(doc < min_doc))
+				maxscore_out_of_order_error(reader);
+			min_doc = doc + 1;
+
+			score += maxscore_posting_contribution(
+					idf, k1_plus_one, norms, query_freq, bp);
+			if (!maxscore_rejected(score, weak_bound, rounding, threshold) &&
+				tp_segment_is_alive(reader, doc))
+			{
+				matches[matches_count].doc	   = doc;
+				matches[matches_count++].score = score;
+			}
+			index++;
+		}
+		if (unlikely(index == start_index))
+			maxscore_out_of_order_error(reader);
+		maxscore_finish_chunk(ts, index, block_count);
+	}
+	return matches_count;
+}
+
+/*
  * Exactly two essential lists can emit their ascending union directly.
  * Local block positions survive loading the other iterator because decoded
  * outputs are owned copies and raw direct inputs have independent pins.
@@ -1771,6 +1848,7 @@ maxscore_two_essential_matches(
 		TpTermState			   *a,
 		TpTermState			   *b,
 		const TpMaxScoreParams *params,
+		uint32					base,
 		uint32					batch_end,
 		TpMaxScoreMatch		   *matches,
 		double					weak_bound,
@@ -1778,21 +1856,24 @@ maxscore_two_essential_matches(
 		float4					threshold,
 		TpBMWStats			   *stats)
 {
-	const TpBlockPosting *ap	 = a->iter.block_postings;
-	const TpBlockPosting *bp	 = b->iter.block_postings;
-	uint32				  ai	 = a->iter.current_in_block;
-	uint32				  bi	 = b->iter.current_in_block;
-	uint32				  an	 = a->iter.skip_entry.doc_count;
-	uint32				  bn	 = b->iter.skip_entry.doc_count;
-	const float4		  aidf	 = a->idf;
-	const float4		  ak1	 = params->k1_plus_one;
-	const float4		  aqf	 = (float4)a->query_freq;
-	const float4		 *anorms = params->k1_len_norm;
-	const float4		  bidf	 = b->idf;
-	const float4		  bk1	 = params->k1_plus_one;
-	const float4		  bqf	 = (float4)b->query_freq;
-	const float4		 *bnorms = params->k1_len_norm;
-	TpMaxScoreMatch		 *write	 = matches;
+	const TpBlockPosting *ap	  = a->iter.block_postings;
+	const TpBlockPosting *bp	  = b->iter.block_postings;
+	uint32				  ai	  = a->iter.current_in_block;
+	uint32				  bi	  = b->iter.current_in_block;
+	uint32				  an	  = a->iter.skip_entry.doc_count;
+	uint32				  bn	  = b->iter.skip_entry.doc_count;
+	const float4		  aidf	  = a->idf;
+	const float4		  ak1	  = params->k1_plus_one;
+	const float4		  aqf	  = (float4)a->query_freq;
+	const float4		 *anorms  = params->k1_len_norm;
+	const float4		  bidf	  = b->idf;
+	const float4		  bk1	  = params->k1_plus_one;
+	const float4		  bqf	  = (float4)b->query_freq;
+	const float4		 *bnorms  = params->k1_len_norm;
+	TpMaxScoreMatch		 *write	  = matches;
+	uint32				  min_doc = base;
+
+	Assert(batch_end >= base && batch_end - base <= TP_MAXSCORE_BATCH);
 
 	if (a->iter.finished)
 		an = 0;
@@ -1803,14 +1884,28 @@ maxscore_two_essential_matches(
 		bool   active_a	 = ai < an && ap[ai].doc_id < batch_end;
 		bool   active_b	 = bi < bn && bp[bi].doc_id < batch_end;
 		uint32 chunk_end = batch_end;
+		uint32 prev_ai	 = ai;
+		uint32 prev_bi	 = bi;
 
 		if (!active_a && !active_b)
 			break;
 		CHECK_FOR_INTERRUPTS();
 		if (active_a)
-			chunk_end = Min(chunk_end, ap[an - 1].doc_id + 1);
+		{
+			uint32 last_a = ap[an - 1].doc_id;
+			if (unlikely(last_a < ap[ai].doc_id))
+				maxscore_out_of_order_error(reader);
+			if (last_a < chunk_end)
+				chunk_end = last_a + 1;
+		}
 		if (active_b)
-			chunk_end = Min(chunk_end, bp[bn - 1].doc_id + 1);
+		{
+			uint32 last_b = bp[bn - 1].doc_id;
+			if (unlikely(last_b < bp[bi].doc_id))
+				maxscore_out_of_order_error(reader);
+			if (last_b < chunk_end)
+				chunk_end = last_b + 1;
+		}
 
 		for (;;)
 		{
@@ -1821,6 +1916,10 @@ maxscore_two_essential_matches(
 
 			if (doc >= chunk_end)
 				break;
+			if (unlikely(doc < min_doc))
+				maxscore_out_of_order_error(reader);
+			min_doc = doc + 1;
+
 			/* Keep the generic dense path's state order and float4 terms. */
 			if (adoc == doc)
 			{
@@ -1845,6 +1944,9 @@ maxscore_two_essential_matches(
 			}
 		}
 
+		if (unlikely(ai == prev_ai && bi == prev_bi))
+			maxscore_out_of_order_error(reader);
+
 		if (active_a && ai == an)
 		{
 			maxscore_finish_chunk(a, ai, an);
@@ -1866,6 +1968,83 @@ maxscore_two_essential_matches(
 	if (!b->iter.finished)
 		maxscore_finish_chunk(b, bi, bn);
 	return (int)(write - matches);
+}
+
+/*
+ * Three or more essential lists: accumulate into dense batch bitmap/scores.
+ */
+static pg_noinline int
+maxscore_bitmap_essential_matches(
+		TpSegmentReader		   *reader,
+		TpMaxScoreTerm		   *states,
+		int						weak_count,
+		int						count,
+		const TpMaxScoreParams *params,
+		uint32					base,
+		uint32					batch_end,
+		double				   *scores,
+		uint64				   *touched,
+		TpMaxScoreMatch		   *matches,
+		double					weak_bound,
+		double					rounding,
+		float4					threshold,
+		TpBMWStats			   *stats)
+{
+	uint32 word_count;
+	int	   i;
+
+	Assert(batch_end >= base && batch_end - base <= TP_MAXSCORE_BATCH);
+
+	for (i = weak_count; i < count; i++)
+	{
+		TpTermState	 *ts		  = states[i].ts;
+		const float4  idf		  = ts->idf;
+		const float4  k1_plus_one = params->k1_plus_one;
+		const float4  query_freq  = (float4)ts->query_freq;
+		const float4 *norms		  = params->k1_len_norm;
+		uint32		  min_doc	  = base;
+
+		while (term_current_doc_id(ts) < batch_end)
+		{
+			const TpBlockPosting *postings	  = ts->iter.block_postings;
+			uint32				  index		  = ts->iter.current_in_block;
+			uint32				  block_count = ts->iter.skip_entry.doc_count;
+			uint32				  start_index = index;
+
+			CHECK_FOR_INTERRUPTS();
+			if (stats && index == 0)
+				stats->blocks_scanned++;
+			while (index < block_count && postings[index].doc_id < batch_end)
+			{
+				const TpBlockPosting *bp  = &postings[index];
+				uint32				  doc = bp->doc_id;
+				uint32				  offset;
+
+				if (unlikely(doc < min_doc))
+					maxscore_out_of_order_error(reader);
+				min_doc = doc + 1;
+				offset	= doc - base;
+				touched[offset / 64] |= UINT64_C(1) << (offset % 64);
+				scores[offset] += maxscore_posting_contribution(
+						idf, k1_plus_one, norms, query_freq, bp);
+				index++;
+			}
+			if (unlikely(index == start_index))
+				maxscore_out_of_order_error(reader);
+			maxscore_finish_chunk(ts, index, block_count);
+		}
+	}
+	word_count = (batch_end - base + 63) / 64;
+	return maxscore_extract_matches(
+			reader,
+			scores,
+			touched,
+			word_count,
+			base,
+			matches,
+			weak_bound,
+			rounding,
+			threshold);
 }
 
 /*
@@ -2101,7 +2280,6 @@ score_segment_multi_term_maxscore(
 			uint32 base = UINT32_MAX;
 			uint32 batch_end;
 			int	   matches_count = 0;
-			uint32 word_count;
 
 			CHECK_FOR_INTERRUPTS();
 			threshold = tp_topk_threshold(heap);
@@ -2132,40 +2310,17 @@ score_segment_multi_term_maxscore(
 												: TP_MAXSCORE_BATCH));
 			if (count - weak_count == 1)
 			{
-				TpTermState	 *ts		  = states[weak_count].ts;
-				const float4  idf		  = ts->idf;
-				const float4  k1_plus_one = params->k1_plus_one;
-				const float4  query_freq  = (float4)ts->query_freq;
-				const float4 *norms		  = params->k1_len_norm;
-
-				while (term_current_doc_id(ts) < batch_end)
-				{
-					const TpBlockPosting *postings = ts->iter.block_postings;
-					uint32				  index	   = ts->iter.current_in_block;
-					uint32 block_count = ts->iter.skip_entry.doc_count;
-
-					CHECK_FOR_INTERRUPTS();
-					if (stats && index == 0)
-						stats->blocks_scanned++;
-					while (index < block_count &&
-						   postings[index].doc_id < batch_end)
-					{
-						const TpBlockPosting *bp	= &postings[index];
-						uint32				  doc	= bp->doc_id;
-						double				  score = 0.0;
-						score += maxscore_posting_contribution(
-								idf, k1_plus_one, norms, query_freq, bp);
-						if (!maxscore_rejected(
-									score, weak_bound, rounding, threshold) &&
-							tp_segment_is_alive(reader, doc))
-						{
-							matches[matches_count].doc	   = doc;
-							matches[matches_count++].score = score;
-						}
-						index++;
-					}
-					maxscore_finish_chunk(ts, index, block_count);
-				}
+				matches_count = maxscore_one_essential_matches(
+						reader,
+						states[weak_count].ts,
+						params,
+						base,
+						batch_end,
+						matches,
+						weak_bound,
+						rounding,
+						threshold,
+						stats);
 			}
 			else if (count - weak_count == 2)
 			{
@@ -2174,6 +2329,7 @@ score_segment_multi_term_maxscore(
 						states[weak_count].ts,
 						states[weak_count + 1].ts,
 						params,
+						base,
 						batch_end,
 						matches,
 						weak_bound,
@@ -2183,59 +2339,21 @@ score_segment_multi_term_maxscore(
 			}
 			else
 			{
-				for (i = weak_count; i < count; i++)
-				{
-					TpTermState	 *ts		  = states[i].ts;
-					const float4  idf		  = ts->idf;
-					const float4  k1_plus_one = params->k1_plus_one;
-					const float4  query_freq  = (float4)ts->query_freq;
-					const float4 *norms		  = params->k1_len_norm;
-
-					while (term_current_doc_id(ts) < batch_end)
-					{
-						const TpBlockPosting *postings =
-								ts->iter.block_postings;
-						uint32 index	   = ts->iter.current_in_block;
-						uint32 block_count = ts->iter.skip_entry.doc_count;
-
-						CHECK_FOR_INTERRUPTS();
-						if (stats && index == 0)
-							stats->blocks_scanned++;
-						while (index < block_count &&
-							   postings[index].doc_id < batch_end)
-						{
-							const TpBlockPosting *bp	 = &postings[index];
-							uint32				  offset = bp->doc_id - base;
-
-							if (unlikely(bp->doc_id < base))
-								ereport(ERROR,
-										(errcode(ERRCODE_DATA_CORRUPTED),
-										 errmsg("out-of-order posting in "
-												"index \"%s\"",
-												RelationGetRelationName(
-														reader->index)),
-										 errhint("Rebuild the index with "
-												 "REINDEX.")));
-							touched[offset / 64] |= UINT64_C(1)
-												 << (offset % 64);
-							scores[offset] += maxscore_posting_contribution(
-									idf, k1_plus_one, norms, query_freq, bp);
-							index++;
-						}
-						maxscore_finish_chunk(ts, index, block_count);
-					}
-				}
-				word_count	  = (batch_end - base + 63) / 64;
-				matches_count = maxscore_extract_matches(
+				matches_count = maxscore_bitmap_essential_matches(
 						reader,
+						states,
+						weak_count,
+						count,
+						params,
+						base,
+						batch_end,
 						scores,
 						touched,
-						word_count,
-						base,
 						matches,
 						weak_bound,
 						rounding,
-						threshold);
+						threshold,
+						stats);
 			}
 			for (i = weak_count - 1; i >= 0 && matches_count > 0; i--)
 			{
@@ -2373,7 +2491,7 @@ score_segment_multi_term_bmw(
 		int	   pivot_len;
 		uint32 pivot_doc_id;
 		float4 threshold;
-		float4 block_upper;
+		double block_upper;
 		float4 doc_score;
 		int	   i;
 
@@ -2446,7 +2564,7 @@ score_segment_multi_term_bmw(
 		block_upper = compute_block_max_at_pivot(terms, pivot_len);
 
 		{
-			float4 non_pivot_max = 0.0f;
+			double non_pivot_max = 0.0;
 			int	   np;
 
 			for (np = pivot_len; np < term_count; np++)
@@ -2457,7 +2575,7 @@ score_segment_multi_term_bmw(
 				non_pivot_max += ts->max_score;
 			}
 
-			if ((block_upper + non_pivot_max) <= threshold)
+			if ((block_upper + non_pivot_max) <= (double)threshold)
 			{
 				block_max_skip_advance(
 						terms, term_count, pivot_len, &active_count, stats);

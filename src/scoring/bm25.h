@@ -20,8 +20,7 @@ struct TpBMWFilter;
 typedef struct DocumentScoreEntry
 {
 	ItemPointerData ctid;
-	float4			score;
-	float4			doc_length;
+	double			score; /* Sum of float4 term contributions before TopK. */
 } DocumentScoreEntry;
 
 extern int tp_score_documents(
