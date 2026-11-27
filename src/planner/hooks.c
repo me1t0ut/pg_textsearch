@@ -3008,10 +3008,10 @@ find_index_opt_info(RelOptInfo *rel, Oid index_oid)
 }
 
 /*
- * Fix BM25 IndexPaths in a path list to use the explicitly specified index.
+ * Fix ordered BM25 IndexPaths to use the explicitly specified index.
  *
- * For each BM25 IndexPath, finds the matching explicit requirement by
- * column and swaps the indexinfo if needed.
+ * A pure Boolean path keeps the index chosen for its filter. A score in
+ * the projection can use a different index through standalone scoring.
  */
 static void
 fix_bm25_indexpaths(
@@ -3041,7 +3041,8 @@ fix_bm25_indexpaths(
 			continue;
 
 		indexpath = (IndexPath *)path;
-		if (indexpath->indexinfo->nkeycolumns < 1)
+		if (indexpath->indexorderbys == NIL ||
+			indexpath->indexinfo->nkeycolumns < 1)
 			continue;
 		attnum = indexpath->indexinfo->indexkeys[0];
 
@@ -3068,8 +3069,7 @@ fix_bm25_indexpaths(
 			(correct_indexinfo->indpred != NIL && !correct_indexinfo->predOK))
 			continue;
 
-		if (indexpath->indexorderbys != NIL &&
-			!index_matches_path_ordering(
+		if (!index_matches_path_ordering(
 					indexpath, correct_indexinfo, bm25_am_oid))
 			continue;
 

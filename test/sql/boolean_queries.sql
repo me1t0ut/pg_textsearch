@@ -69,6 +69,23 @@ CREATE TEMP TABLE boolean_other (id integer);
 INSERT INTO boolean_other SELECT generate_series(1, 9);
 
 \pset format unaligned
+-- The Boolean filter uses English stemming while the projected score uses
+-- the explicitly named simple index, where 'approve' has no matching term.
+SET client_min_messages = WARNING;
+CREATE INDEX boolean_docs_simple_idx ON boolean_docs USING bm25(body)
+    WITH (text_config = 'simple');
+RESET client_min_messages;
+EXPLAIN (COSTS OFF)
+SELECT id, body <@> to_bm25query('approve', 'boolean_docs_simple_idx') = 0
+    AS uses_simple_score
+FROM boolean_docs
+WHERE body @@ to_tsquery('english', 'approve');
+SELECT id, body <@> to_bm25query('approve', 'boolean_docs_simple_idx') = 0
+    AS uses_simple_score
+FROM boolean_docs
+WHERE body @@ to_tsquery('english', 'approve');
+DROP INDEX boolean_docs_simple_idx;
+
 SET enable_sort = off;
 SELECT pg_temp.has_ranked_boolean_scan($query$
     SELECT id
