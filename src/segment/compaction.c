@@ -5,6 +5,7 @@
 #include <postgres.h>
 
 #include <access/generic_xlog.h>
+#include <access/parallel.h>
 #include <access/transam.h>
 #include <access/xact.h>
 #include <access/xlog.h>
@@ -16,6 +17,7 @@
 #include <storage/lmgr.h>
 #include <storage/lock.h>
 #include <storage/lwlock.h>
+#include <storage/proc.h>
 #include <utils/hsearch.h>
 #include <utils/timestamp.h>
 
@@ -1889,15 +1891,16 @@ tp_publish_compaction_output(
 		}
 		UnlockReleaseBuffer(metabuf);
 		metabuf = InvalidBuffer;
+
+		if (stamp_with_next_fxid && output->tombstones.owned_count > 0)
+			tp_tombstone_restamp_batch(
+					index, output->tombstones, ReadNextFullTransactionId());
+
 		if (acquired_here)
 		{
 			tp_release_index_lock(index_state);
 			acquired_here = false;
 		}
-
-		if (stamp_with_next_fxid)
-			tp_tombstone_restamp_batch(
-					index, output->tombstones, ReadNextFullTransactionId());
 
 		tp_release_published_output(output);
 		published = true;
@@ -1907,36 +1910,52 @@ tp_publish_compaction_output(
 	}
 	PG_CATCH();
 	{
-		if (!output->publication_started)
+		if (!output->publication_started && publication_state != NULL)
+			GenericXLogAbort((GenericXLogState *)publication_state);
+		if (BufferIsValid(tailbuf))
 		{
-			if (publication_state != NULL)
-				GenericXLogAbort((GenericXLogState *)publication_state);
-			if (BufferIsValid(tailbuf))
-			{
-				if (InterruptHoldoffCount == 0)
-					HOLD_INTERRUPTS();
-				UnlockReleaseBuffer(tailbuf);
-			}
-			if (BufferIsValid(predecessor_buf))
-			{
-				if (InterruptHoldoffCount == 0)
-					HOLD_INTERRUPTS();
-				UnlockReleaseBuffer(predecessor_buf);
-			}
-			if (BufferIsValid(metabuf))
-			{
-				if (InterruptHoldoffCount == 0)
-					HOLD_INTERRUPTS();
-				UnlockReleaseBuffer(metabuf);
-			}
-			if (acquired_here && index_state->lock_held)
-				tp_release_index_lock(index_state);
+			if (InterruptHoldoffCount == 0)
+				HOLD_INTERRUPTS();
+			UnlockReleaseBuffer(tailbuf);
 		}
+		if (BufferIsValid(predecessor_buf))
+		{
+			if (InterruptHoldoffCount == 0)
+				HOLD_INTERRUPTS();
+			UnlockReleaseBuffer(predecessor_buf);
+		}
+		if (BufferIsValid(metabuf))
+		{
+			if (InterruptHoldoffCount == 0)
+				HOLD_INTERRUPTS();
+			UnlockReleaseBuffer(metabuf);
+		}
+		if (acquired_here && index_state->lock_held)
+			tp_release_index_lock(index_state);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
 
 	return published;
+}
+
+/*
+ * Backends in parallel mode or marked PROC_IN_VACUUM /
+ * PROC_IN_LOGICAL_DECODING cannot use GetCurrentFullTransactionId() to pin
+ * deferred reclaim: parallel mode forbids XID assignment, and
+ * GetSnapshotData() / ComputeXidHorizons() skip those status flags, so an
+ * assigned XID does not hold back concurrent readers' xmin or
+ * GetOldestNonRemovableTransactionId().  Publish a provisional invalid
+ * stamp and activate it with ReadNextFullTransactionId() after the
+ * publication WAL record is inserted.
+ */
+static bool
+tp_reclaim_uses_post_publish_fxid(void)
+{
+	return IsInParallelMode() || IsParallelWorker() ||
+		   (MyProc != NULL &&
+			(MyProc->statusFlags &
+			 (PROC_IN_VACUUM | PROC_IN_LOGICAL_DECODING)) != 0);
 }
 
 static void
@@ -1968,12 +1987,18 @@ tp_complete_compaction_publication(
 							"\"%s\"",
 							RelationGetRelationName(index))));
 
+		if (!stamp_with_next_fxid && !FullTransactionIdIsValid(reclaim_fxid) &&
+			output->tombstones.owned_count > 0 &&
+			tp_reclaim_uses_post_publish_fxid())
+			stamp_with_next_fxid = true;
+
 		/*
-		 * Ordinary compaction assigns and restamps here; a serial prepared
-		 * replacement arrives with a VACUUM-assigned XID.  Parallel VACUUM
-		 * cannot assign one, so it publishes with an invalid provisional
-		 * stamp and activates after the graph publication WAL record is
-		 * inserted.
+		 * Ordinary non-VACUUM compaction assigns and restamps here so the
+		 * in-progress transaction pins primary and standby horizons through
+		 * publication.  VACUUM (PROC_IN_VACUUM) and parallel callers cannot
+		 * rely on an assigned XID, so they publish with an invalid
+		 * provisional stamp and activate with ReadNextFullTransactionId()
+		 * after the graph publication WAL record is inserted.
 		 */
 		if (stamp_with_next_fxid)
 		{
@@ -2262,6 +2287,8 @@ tp_publish_prepared_segment_replacement(
 					(errcode(ERRCODE_DATA_CORRUPTED),
 					 errmsg("prepared replacement source %u has no pages",
 							source_root)));
+		if (!stamp_with_next_fxid && tp_reclaim_uses_post_publish_fxid())
+			stamp_with_next_fxid = true;
 		if (!stamp_with_next_fxid)
 			reclaim_fxid = GetCurrentFullTransactionId();
 		tp_tombstone_build_detached(

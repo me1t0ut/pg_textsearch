@@ -1101,6 +1101,147 @@ test_partial_allocation_cancellation() {
         tombstone_control_docs tombstone_control_idx tombstonecase
 }
 
+test_vacuum_reclaim_protects_standalone_reader() {
+    local vac_output="${CLIENT_DIR}/vac_reclaim_640.log"
+    local locker_output="${CLIENT_DIR}/locker_reclaim_640.log"
+    local reader_output="${CLIENT_DIR}/reader_reclaim_640.log"
+    local vac_pid
+    local vac_backend
+    local vac_xid
+    local locker_pid
+    local locker_backend
+    local reader_pid
+    local reader_waiting
+    local pending
+    local locked
+    local expected_score
+    local reader_result
+
+    log "Case: VACUUM compaction protects concurrent standalone <@> reader..."
+    sql -c "
+        CREATE TABLE vac_reclaim_docs (
+            id bigserial PRIMARY KEY,
+            body text NOT NULL
+        );
+        CREATE INDEX vac_reclaim_idx ON vac_reclaim_docs USING bm25(body)
+            WITH (text_config = 'english', compaction = 'off');
+
+        INSERT INTO vac_reclaim_docs(body)
+        VALUES ('alpha doomed one'), ('alpha doomed two');
+        SELECT bm25_spill_index('vac_reclaim_idx');
+
+        INSERT INTO vac_reclaim_docs(body)
+        VALUES ('beta plain'), ('gamma needle');
+        SELECT bm25_spill_index('vac_reclaim_idx');
+
+        ALTER INDEX vac_reclaim_idx SET (compaction = 'inline');
+        DELETE FROM vac_reclaim_docs WHERE id IN (1, 2);" >/dev/null
+
+    expected_score=$(sql -c "
+        SELECT body <@> to_bm25query('needle', 'vac_reclaim_idx')
+          FROM vac_reclaim_docs
+         WHERE id = 4;")
+
+    # Pause VACUUM's empty-segment compaction just before publication.
+    # Send via stdin so VACUUM does not run inside an implicit -c transaction.
+    PGAPPNAME=pgts-vac-reclaim-640 sql >"${vac_output}" 2>&1 <<SQL &
+SELECT injection_points_set_local();
+SELECT injection_points_attach('${POINT_BEFORE_PUBLISH}', 'wait');
+VACUUM vac_reclaim_docs;
+SQL
+    vac_pid=$!
+    vac_backend=$(backend_pid pgts-vac-reclaim-640)
+    wait_for_injection "${POINT_BEFORE_PUBLISH}" "${vac_backend}"
+
+    # Lazy VACUUM runs with PROC_IN_VACUUM and must not assign an XID for its
+    # tombstone horizon.
+    vac_xid=$(sql -c "
+        SELECT coalesce(backend_xid::text, '')
+          FROM pg_stat_activity
+         WHERE pid = ${vac_backend};")
+    [ -z "${vac_xid}" ] ||
+        fail "VACUUM compaction unexpectedly assigned backend_xid=${vac_xid}"
+
+    # Advance latestCompletedXid while VACUUM is paused pre-publication.
+    sql -c "SELECT txid_current();" >/dev/null
+
+    # Hold an advisory lock so the standalone reader pauses after row 3
+    # captures TpScoringSnapshot (including the about-to-be-displaced segment)
+    # and before row 4 opens that segment for 'needle'.
+    start_sql pgts-locker-reclaim-640 "
+        SELECT pg_advisory_lock(64001);
+        SELECT pg_sleep(30);" "${locker_output}"
+    locker_pid=${STARTED_PID}
+    locker_backend=$(backend_pid pgts-locker-reclaim-640)
+    locked=0
+    for _ in $(seq 1 100); do
+        locked=$(sql -c "
+            SELECT count(*)
+              FROM pg_locks
+             WHERE locktype = 'advisory'
+               AND objid = 64001
+               AND granted;")
+        [ "${locked}" = "1" ] && break
+        sleep 0.05
+    done
+    [ "${locked}" = "1" ] || fail "advisory locker did not acquire lock"
+
+    start_sql pgts-reader-reclaim-640 "
+        SELECT id,
+               CASE WHEN id = 4 THEN pg_advisory_lock_shared(64001) END,
+               body <@> to_bm25query('needle', 'vac_reclaim_idx')
+          FROM vac_reclaim_docs
+         WHERE id IN (3, 4)
+         ORDER BY id;" "${reader_output}"
+    reader_pid=${STARTED_PID}
+    reader_waiting=0
+    for _ in $(seq 1 100); do
+        reader_waiting=$(sql -c "
+            SELECT count(*)
+              FROM pg_stat_activity
+             WHERE application_name = 'pgts-reader-reclaim-640'
+               AND wait_event = 'advisory';")
+        [ "${reader_waiting}" = "1" ] && break
+        sleep 0.05
+    done
+    [ "${reader_waiting}" = "1" ] ||
+        fail "standalone reader did not reach advisory wait after row 3"
+
+    # Let VACUUM publish compaction and execute its own tp_tombstone_drain().
+    release_injection "${POINT_BEFORE_PUBLISH}"
+    wait_success "${vac_pid}" 15 "VACUUM compaction" "${vac_output}"
+
+    pending=$(pending_free vac_reclaim_idx)
+    [ "${pending}" -gt 0 ] ||
+        fail "VACUUM drained displaced pages while standalone reader held snapshot"
+
+    # A follow-up VACUUM drain must also retain the pages while reader lives.
+    sql -c "VACUUM vac_reclaim_docs;" >/dev/null
+    pending=$(pending_free vac_reclaim_idx)
+    [ "${pending}" -gt 0 ] ||
+        fail "second VACUUM drained displaced pages while standalone reader held snapshot"
+
+    # Release the advisory lock and confirm the standalone reader finishes
+    # without hitting a freed segment header (TP_FREE_PAGE_MAGIC).
+    sql -c "SELECT pg_terminate_backend(${locker_backend});" >/dev/null || true
+    wait "${locker_pid}" 2>/dev/null || true
+    wait_success "${reader_pid}" 15 "standalone reader" "${reader_output}"
+
+    reader_result=$(tr '\n' ',' <"${reader_output}")
+    [ "${reader_result}" = "3||0,4||${expected_score}," ] ||
+        fail "unexpected standalone reader output: ${reader_result}"
+
+    # Once the reader exits and the XID horizon advances, VACUUM drains cleanly.
+    sql >/dev/null <<'SQL'
+SELECT txid_current();
+SELECT txid_current();
+VACUUM vac_reclaim_docs;
+SQL
+    pending=$(pending_free vac_reclaim_idx)
+    [ "${pending}" -eq 0 ] ||
+        fail "VACUUM did not drain displaced pages after reader finished (pending=${pending})"
+}
+
 main() {
     if [ ! -f "$(pg_config --pkglibdir)/injection_points.so" ]; then
         log "Skipping: PostgreSQL was built without injection points"
@@ -1117,6 +1258,7 @@ main() {
     test_same_index_serialization
     test_different_index_overlap
     test_publication_barrier_progress
+    test_vacuum_reclaim_protects_standalone_reader
     test_cancel_before_publish
     test_partial_allocation_cancellation
     log "All deterministic non-blocking compaction cases passed"

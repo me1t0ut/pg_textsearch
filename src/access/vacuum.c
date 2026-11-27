@@ -1288,8 +1288,6 @@ tp_vacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 		 */
 		freed_pages =
 				tp_reclaim_dead_memtable_pages(info->index, info->heaprel);
-		tp_compaction_unlock(info->index);
-		maintenance_locked = false;
 
 		if (stats->pages_deleted == 0 && stats->tuples_removed == 0 &&
 			freed_pages == 0)
@@ -1307,8 +1305,11 @@ tp_vacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 		 * tombstone chain (metap->pending_free_head and tombstone
 		 * next_page links), so it must run under LW_EXCLUSIVE, not
 		 * LW_SHARED.  tp_tombstone_drain takes/releases the lock per
-		 * drained tombstone (own_lock=true) so concurrent reads never
-		 * wait only for the unlink, not its subsequent page frees.
+		 * drained tombstone (own_lock=true) so concurrent reads wait
+		 * only for the unlink, not its subsequent page frees.
+		 * Maintenance remains held across drain to serialize against
+		 * compaction publication, another drain, and force-merge
+		 * truncation.
 		 */
 		{
 			uint32 drained = tp_tombstone_drain(
@@ -1323,6 +1324,8 @@ tp_vacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 				IndexFreeSpaceMapVacuum(info->index);
 			}
 		}
+		tp_compaction_unlock(info->index);
+		maintenance_locked = false;
 	}
 	PG_FINALLY();
 	{

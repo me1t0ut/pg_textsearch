@@ -483,26 +483,25 @@ Metapage V8 already contains `pending_free_head`; compaction preserves that
 existing chain when upgrading and publishing. Only older metapage versions
 synthesize an empty pending-free head.
 
-Serial VACUUM segment replacement assigns its current full transaction ID
-before building replacement tombstones. That transaction remains in progress
-through the replacement `GenericXLog` publication, preventing a later standby
-snapshot from observing the old graph with a reclaim stamp that is already in
-its past.
+Lazy VACUUM runs with `PROC_IN_VACUUM` set, so PostgreSQL's
+`GetSnapshotData()` and `ComputeXidHorizons()` ignore any XID assigned to it.
+Compaction and legacy segment replacement invoked during VACUUM (serial or
+parallel) therefore do not assign an XID: they attach their detached tombstone
+batch with a provisional invalid stamp atomically inside the publication
+`GenericXLog` record, then sample `ReadNextFullTransactionId()` and
+WAL-restamp the attached containers before releasing `LW_EXCLUSIVE`. Because
+sampling happens after the publication WAL record is inserted, every primary or
+standby snapshot that could still discover the old graph has `xmin` at or below
+that stamp. Invalid stamps are unreclaimable; after a crash before restamping,
+a later tombstone drain activates them with a fresh post-publication stamp
+before any reuse.
 
 PostgreSQL can invoke index bulk-delete in a parallel worker or in a leader
 that has already entered parallel mode, where assigning an XID is forbidden.
 In that context VACUUM still persists V5 alive-bit changes, including an
 all-zero bitmap, but leaves an empty segment physically linked for later
 serial compaction. A VACUUM-triggered spill remains published while its
-compaction policy is deferred. For affected legacy segments, parallel VACUUM
-builds detached tombstones with a provisional invalid stamp before
-publication. Under the publication barrier and `LW_EXCLUSIVE`, one
-`GenericXLog` action replaces the graph and attaches that provisional batch
-atomically. Only after the publication WAL record is inserted does VACUUM
-sample `ReadNextFullTransactionId()` and WAL-restamp the attached containers.
-WAL order protects standby readers that can still see the old graph. Invalid
-stamps are unreclaimable; after a crash, a later tombstone drain activates
-them with a new post-publication stamp before any reuse.
+compaction policy is deferred.
 
 A handled error before publication returns every explicitly tracked output and
 tombstone allocation to the FSM without freeing selected source pages. A
